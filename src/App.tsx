@@ -230,19 +230,43 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // If file is > 1MB, upload to server for persistence/limit bypass as requested
+    // but we still need to parse it for the bulk list.
+    // However, for 100MB files, parsing 2-4 million lines in React state is a recipe for disaster.
+    // We should probably limit the UI view if it's massive.
+    
+    setLoading(true);
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const text = event.target?.result as string;
-      if (!text) return;
+      if (!text) {
+          setLoading(false);
+          return;
+      }
+
+      // Upload to server for 2hr persistence as requested
+      try {
+          await fetch('/api/upload', {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain' },
+              body: text
+          });
+      } catch (err) {
+          console.error("Failed to persist file to server:", err);
+      }
 
       const lines = text.split(/\r?\n/);
       const newAccounts: BulkAccount[] = [];
 
-      lines.forEach((line, index) => {
+      // Limit to 50k accounts in UI for performance, even if file is 100MB
+      const maxUIAccounts = 50000;
+      const effectiveLines = lines.slice(0, maxUIAccounts);
+
+      effectiveLines.forEach((line, index) => {
         const trimmed = line.trim();
         if (trimmed && trimmed.includes(':')) {
           newAccounts.push({
@@ -255,7 +279,11 @@ export default function App() {
 
       if (newAccounts.length > 0) {
         setBulkAccounts(prev => [...prev, ...newAccounts]);
+        if (lines.length > maxUIAccounts) {
+            alert(`File loaded. Only the first ${maxUIAccounts} accounts were loaded into the UI for performance, but the full file was saved to the server.`);
+        }
       }
+      setLoading(false);
     };
     reader.readAsText(file);
     e.target.value = ''; // Reset input

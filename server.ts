@@ -1,6 +1,8 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
@@ -32,7 +34,60 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+  const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR);
+  }
+
+  // Cleanup task: delete files older than 2 hours
+  setInterval(() => {
+    const now = Date.now();
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+    fs.readdir(UPLOADS_DIR, (err, files) => {
+      if (err) return;
+      files.forEach(file => {
+        const filePath = path.join(UPLOADS_DIR, file);
+        fs.stat(filePath, (err, stats) => {
+          if (err) return;
+          if (now - stats.mtimeMs > TWO_HOURS) {
+            fs.unlink(filePath, () => {
+              console.log(`[CLEANUP] Deleted old file: ${file}`);
+            });
+          }
+        });
+      });
+    });
+  }, 15 * 60 * 1000); // Check every 15 minutes
+
+  app.post('/api/upload', express.text({ limit: '100mb' }), (req, res) => {
+    try {
+      const content = req.body;
+      if (!content || typeof content !== 'string') {
+        return res.status(400).json({ error: 'No content provided' });
+      }
+      const fileId = crypto.randomUUID();
+      fs.writeFileSync(path.join(UPLOADS_DIR, fileId), content);
+      res.json({ id: fileId });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to upload file' });
+    }
+  });
+
+  app.get('/api/file/:id', (req, res) => {
+    try {
+      const filePath = path.join(UPLOADS_DIR, req.params.id);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'File not found or expired' });
+      }
+      const content = fs.readFileSync(filePath, 'utf-8');
+      res.send(content);
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to read file' });
+    }
+  });
 
   // Helper for robust XML parsing without deps
   const extractXml = (xml: string, tag: string) => {
