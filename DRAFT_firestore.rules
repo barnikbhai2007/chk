@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      // Identity-based admin check. Requires a document in /admins/{uid}
+      // Fallback: primary developer email (must be verified)
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'barnikbhowmik2@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validations ---
+
+    function isValidCheck(data) {
+      return data.keys().hasAll(['credentials', 'steamId', 'timestamp', 'gameCount']) &&
+             data.keys().size() <= 15 && // Prevent shadow fields
+             data.credentials is string && data.credentials.size() <= 512 &&
+             data.steamId is string && data.steamId.size() <= 128 &&
+             data.personaName is string && data.personaName.size() <= 128 &&
+             data.timestamp == request.time &&
+             data.gameCount is int &&
+             (data.get('valueScore', 0) is int || data.get('valueScore', 0) is float);
+    }
+
+    // --- Collections ---
+
+    match /checks/{checkId} {
+      // Secure List Query Enforcement
+      allow list: if isAdmin();
+      allow get: if isAdmin();
+      
+      // We block client writes to ensure only the server persists these.
+      // This prevents users from "cleaning" their history or hiding results.
+      allow create: if false; 
+      
+      allow update: if isAdmin() && 
+                      isValidCheck(incoming()) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'flagged']);
+                      
+      allow delete: if isAdmin();
+    }
+
+    match /admins/{userId} {
+      // Allow the user to see if they are an admin
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      // Creation/Update is locked. Managed by backend or manual console.
+      allow write: if false;
+    }
+  }
+}

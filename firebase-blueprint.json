@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "Check": {
+      "title": "Steam Account Check",
+      "description": "Record of a successful Steam account verification including library details.",
+      "type": "object",
+      "properties": {
+        "credentials": { "type": "string", "description": "The user:pass used for the check." },
+        "steamId": { "type": "string" },
+        "personaName": { "type": "string" },
+        "avatar": { "type": "string" },
+        "country": { "type": "string" },
+        "gameCount": { "type": "number" },
+        "walletBalance": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "valueScore": { "type": "number" }
+      },
+      "required": ["credentials", "steamId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/checks/{checkId}": {
+      "schema": "Check",
+      "description": "Historical log of all checked accounts."
+    }
+  }
+}

