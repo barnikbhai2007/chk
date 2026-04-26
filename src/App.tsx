@@ -479,8 +479,8 @@ export default function App() {
                                 .slice(0, 4)
                                 .map(g => (
                                     <div key={g.appid} className="bg-slate-950/80 border border-slate-800 rounded p-1 flex flex-col gap-1 w-full">
-                                        <img src={`https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/capsule_184x69.jpg`} alt="" className="w-full h-12 object-cover opacity-80" />
-                                        <div className="px-1 pb-1">
+                                        <img src={`https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/capsule_184x69.jpg`} alt="" className="w-full h-12 object-cover opacity-80 flex-shrink-0" />
+                                        <div className="px-1 pb-1 flex-1 min-w-0">
                                             <p className="text-[9px] font-bold truncate text-cyan-300">{g.name}</p>
                                             <p className="text-[8px] text-slate-500 font-mono mt-0.5">{Math.round((g.playtime_forever||0)/60)} hrs</p>
                                         </div>
@@ -579,9 +579,9 @@ export default function App() {
                                             .map(g => (
                                                 <div key={`exp_${g.appid}`} className="bg-slate-900 border border-slate-800 rounded overflow-hidden flex flex-col">
                                                     <img src={`https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${g.appid}/capsule_184x69.jpg`} alt="" className="w-full h-10 object-cover opacity-70" loading="lazy" />
-                                                    <div className="p-1">
+                                                    <div className="p-1 flex-1 min-w-0 flex flex-col justify-center">
                                                         <p className="text-[9px] font-bold truncate text-slate-300" title={g.name}>{g.name}</p>
-                                                        <p className="text-[8px] text-slate-500 font-mono">{Math.round((g.playtime_forever||0)/60)}h</p>
+                                                        <p className="text-[8px] text-slate-500 font-mono mt-0.5">{Math.round((g.playtime_forever||0)/60)}h</p>
                                                     </div>
                                                 </div>
                                             ))}
@@ -762,7 +762,7 @@ export default function App() {
             </div>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 p-2 md:p-4 gap-2 md:gap-4 overflow-y-auto custom-scrollbar">
+          <div className="grid grid-cols-1 md:grid-cols-2 p-2 md:p-4 gap-2 md:gap-4 overflow-y-auto custom-scrollbar flex-1 min-h-0 content-start auto-rows-max">
             {games.length > 0 ? (
               games
                 .sort((a, b) => (b.playtime_forever || 0) - (a.playtime_forever || 0))
@@ -797,7 +797,7 @@ export default function App() {
                         }}
                       />
                     </div>
-                    <div className="flex flex-col justify-center overflow-hidden flex-1 relative z-10">
+                    <div className="flex flex-col justify-center overflow-hidden flex-1 min-w-0 relative z-10">
                       <h5 className="text-xs md:text-sm font-bold truncate group-hover:text-cyan-400 transition-colors">{game.name}</h5>
                       <p className="text-[9px] md:text-[10px] text-slate-500 font-mono mt-0.5">
                         {Math.round((game.playtime_forever || 0) / 60)} hrs on record
