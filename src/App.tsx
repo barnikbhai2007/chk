@@ -9,7 +9,7 @@ import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, Lis
 import { SteamProfile, SteamGame, ProfileState } from './types';
 import { auth, db, loginWithGoogle, checkIsAdmin } from './firebase';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, query, orderBy, limit, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, Timestamp, where } from 'firebase/firestore';
 
 interface BulkAccount {
   id: string;
@@ -70,21 +70,26 @@ export default function App() {
         const yesterday = new Date();
         yesterday.setHours(yesterday.getHours() - 24);
         
+        // Server side filter is better
         const q = query(
             collection(db, 'checks'), 
+            where('timestamp', '>=', yesterday),
             orderBy('timestamp', 'desc'), 
             limit(200)
         );
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const checks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // Filter 24h client-side for better reactive feel, but could be done in query
-            const recentChecks = checks.filter((c: any) => {
-                if (!c.timestamp) return true;
-                const ts = c.timestamp instanceof Timestamp ? c.timestamp.toDate() : new Date(c.timestamp);
-                return ts > yesterday;
-            });
-            setAllChecks(recentChecks);
-        });
+
+        console.log("Admin Panel: Subscribing to live checks since", yesterday.toISOString());
+
+        const unsubscribe = onSnapshot(q, 
+            (snapshot) => {
+                const checks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                console.log(`Admin Panel: Received ${checks.length} checks`);
+                setAllChecks(checks);
+            },
+            (err) => {
+                console.error("Admin Panel Subscription Error:", err);
+            }
+        );
         return () => unsubscribe();
     }
   }, [isAdmin, mode]);
@@ -805,7 +810,10 @@ export default function App() {
 
             <div className="bg-slate-900 border border-slate-800 rounded overflow-hidden flex flex-col flex-1 overflow-y-auto min-h-[500px]">
                 <div className="p-4 bg-slate-950 border-b border-slate-800 flex flex-col md:flex-row justify-between items-center sticky top-0 z-10 gap-3">
-                    <p className="text-[10px] uppercase font-bold tracking-[0.2em]">Live History Feed</p>
+                    <p className="text-[10px] uppercase font-bold tracking-[0.2em] flex items-center gap-2">
+                        Live History Feed 
+                        <span className="bg-slate-800 px-2 py-0.5 rounded text-cyan-400 font-mono">{allChecks.length}</span>
+                    </p>
                     <div className="relative w-full md:w-64">
                         <Search className="w-3 h-3 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                         <input 
@@ -1226,8 +1234,8 @@ export default function App() {
                     <label className="text-[9px] uppercase tracking-widest text-slate-500 block mb-2 font-semibold">
                         Concurrency Tasks (Bots)
                     </label>
-                    <div className="flex gap-2">
-                        {[1, 3, 5, 10, 20].map(n => (
+                    <div className="flex flex-wrap gap-2">
+                        {[1, 10, 50, 100, 200, 250].map(n => (
                             <button
                                 key={n}
                                 onClick={() => setBotCount(n)}
@@ -1247,6 +1255,7 @@ export default function App() {
                     <li>Rate limiting applies on the server. Checks occur iteratively.</li>
                     <li>Accounts requiring 2FA will report as "Failed".</li>
                     <li>Success yields library metadata.</li>
+                    <li>High bot counts (100+) require high-quality proxies to avoid Steam rate limits.</li>
                     <li>Search functions locally on successful accounts.</li>
                 </ul>
             </div>

