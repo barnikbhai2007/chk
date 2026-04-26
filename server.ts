@@ -35,6 +35,8 @@ async function startServer() {
     }
   });
 
+  let SteamUser: any;
+
   app.post('/api/steam/login-check', async (req, res) => {
     try {
       const { username, password, proxy } = req.body;
@@ -43,9 +45,14 @@ async function startServer() {
         return res.status(400).json({ error: 'Username and password are required' });
       }
 
+      if (!SteamUser) {
+        const mod = await import('steam-user');
+        SteamUser = mod.default || mod;
+      }
+
       const { HttpsProxyAgent } = await import('https-proxy-agent');
       
-      let clientOpts: any = {};
+      let clientOpts: any = { dataDirectory: null };
       if (proxy) {
         clientOpts.httpProxy = proxy.startsWith('http') ? proxy : `http://${proxy}`;
       }
@@ -55,7 +62,7 @@ async function startServer() {
       const respond = (status: number, data: any) => {
         if (!responded) {
           responded = true;
-          client.logOff();
+          try { client.logOff(); } catch (e) {}
           res.status(status).json(data);
         }
       };

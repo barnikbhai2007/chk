@@ -94,7 +94,14 @@ export default function App() {
           body: JSON.stringify({ username, password })
         });
         
-        const loginData = await loginRes.json();
+        let loginData;
+        const loginText = await loginRes.text();
+        try {
+          loginData = JSON.parse(loginText);
+        } catch (e) {
+          throw new Error(`Server returned non-JSON response: ${loginText.substring(0, 100)}...`);
+        }
+
         if (!loginRes.ok) {
           throw new Error(loginData.error || 'Login verification failed.');
         }
@@ -233,7 +240,13 @@ export default function App() {
                       body: JSON.stringify({ username, password, proxy })
                     });
 
-                    const loginData = await loginRes.json();
+                    let loginData;
+                    const loginText = await loginRes.text();
+                    try {
+                      loginData = JSON.parse(loginText);
+                    } catch (e) {
+                      throw new Error(`Server error: ${loginText.substring(0, 100)}`);
+                    }
                     
                     if (!loginRes.ok) {
                       throw new Error(loginData.error || 'Verification failed');
