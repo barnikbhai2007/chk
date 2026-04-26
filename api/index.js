@@ -22,148 +22,153 @@ app.get('/api/proxies/load', async (req, res) => {
   }
 });
 
-app.post('/api/steam/login-check', async (req, res) => {
-  const { username, password, proxy } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
-  }
-
-  const { HttpsProxyAgent } = await import('https-proxy-agent');
-  
-  let clientOpts = {};
-  if (proxy) {
-    clientOpts.httpProxy = proxy.startsWith('http') ? proxy : `http://${proxy}`;
-  }
-  const client = new SteamUser(clientOpts);
-  
-  let responded = false;
-  const respond = (status, data) => {
-    if (!responded) {
-      responded = true;
-      client.logOff();
-      res.status(status).json(data);
-    }
-  };
-
-  const timeout = setTimeout(() => {
-    respond(408, { error: 'Logon attempt timed out' });
-  }, 45000);
-
-  let engineWalletBalance = null;
-  client.on('wallet', (hasWallet, currency, balance) => {
-      if (hasWallet) {
-          engineWalletBalance = SteamUser.formatCurrency(balance, currency);
-      }
-  });
-
-  client.on('webSession', async (sessionID, cookies) => {
-    clearTimeout(timeout);
-    const steamId = client.steamID;
-    
+  app.post('/api/steam/login-check', async (req, res) => {
     try {
-      let games = [];
-      let gameCount = 0;
+      const { username, password, proxy } = req.body;
+
+      if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+      }
+
+      const { HttpsProxyAgent } = await import('https-proxy-agent');
       
-      try {
-          const appsData = await client.getUserOwnedApps(steamId, { includeAppInfo: true, includePlayedFreeGames: true });
-          games = appsData.apps || [];
-          gameCount = appsData.app_count || games.length;
-      } catch (e) {
-          console.error('Error fetching owned apps:', e);
+      let clientOpts = {};
+      if (proxy) {
+        clientOpts.httpProxy = proxy.startsWith('http') ? proxy : `http://${proxy}`;
       }
+      const client = new SteamUser(clientOpts);
+      
+      let responded = false;
+      const respond = (status, data) => {
+        if (!responded) {
+          responded = true;
+          client.logOff();
+          res.status(status).json(data);
+        }
+      };
 
-      let userData = null;
-      try {
-          const cookieStr = cookies.join('; ');
-          let fetchOpts = { headers: { Cookie: cookieStr } };
-          if (proxy) {
-              fetchOpts.agent = new HttpsProxyAgent(proxy.startsWith('http') ? proxy : `http://${proxy}`);
+      const timeout = setTimeout(() => {
+        respond(408, { error: 'Logon attempt timed out' });
+      }, 45000);
+
+      let engineWalletBalance = null;
+      client.on('wallet', (hasWallet, currency, balance) => {
+          if (hasWallet) {
+              engineWalletBalance = SteamUser.formatCurrency(balance, currency);
           }
-          
-          const profileRes = await fetch(`https://steamcommunity.com/profiles/${steamId.toString()}/?xml=1`, fetchOpts);
-          const text = await profileRes.text();
-
-          if (!text.includes('<error>')) {
-            const personaname = extractXml(text, 'steamID');
-            const avatarfull = extractXml(text, 'avatarFull');
-            const visibilityStateStr = extractXml(text, 'visibilityState');
-            const onlineState = extractXml(text, 'onlineState');
-            const location = extractXml(text, 'location');
-            const memberSince = extractXml(text, 'memberSince');
-
-            let personastate = 0;
-            if (onlineState === 'online' || onlineState === 'in-game') personastate = 1;
-
-            let timecreated = 0;
-            if (memberSince) {
-              const d = new Date(memberSince);
-              if (!isNaN(d.getTime())) timecreated = Math.floor(d.getTime() / 1000);
-            }
-
-            userData = {
-              steamid: steamId.toString(),
-              personaname: personaname || username,
-              avatarfull: avatarfull || 'https://steamcommunity-a.akamaihd.net/public/images/applications/store/default.png',
-              communityvisibilitystate: visibilityStateStr ? parseInt(visibilityStateStr, 10) : 3,
-              personastate,
-              loccountrycode: location || '',
-              timecreated,
-              profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
-            };
-          }
-      } catch (e) {
-          console.error('Error fetching XML persona:', e);
-      }
-
-      if (!userData) {
-          userData = {
-              steamid: steamId.toString(),
-              personaname: username,
-              avatarfull: 'https://steamcommunity-a.akamaihd.net/public/images/applications/store/default.png',
-              communityvisibilitystate: 3,
-              personastate: 0,
-              loccountrycode: '',
-              timecreated: 0,
-              profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
-          }
-      }
-
-      respond(200, {
-        success: true,
-        steamId: steamId.toString(),
-        profile: userData,
-        games: games,
-        game_count: gameCount,
-        walletBalance: engineWalletBalance
       });
-    } catch (e) {
-      respond(200, { success: true, steamId: steamId?.toString(), message: 'Logged in but failed to fetch private data.' });
+
+      client.on('webSession', async (sessionID, cookies) => {
+        clearTimeout(timeout);
+        const steamId = client.steamID;
+        
+        try {
+          let games = [];
+          let gameCount = 0;
+          
+          try {
+              const appsData = await client.getUserOwnedApps(steamId, { includeAppInfo: true, includePlayedFreeGames: true });
+              games = appsData.apps || [];
+              gameCount = appsData.app_count || games.length;
+          } catch (e) {
+              console.error('Error fetching owned apps:', e);
+          }
+
+          let userData = null;
+          try {
+              const cookieStr = cookies.join('; ');
+              let fetchOpts = { headers: { Cookie: cookieStr } };
+              if (proxy) {
+                  fetchOpts.agent = new HttpsProxyAgent(proxy.startsWith('http') ? proxy : `http://${proxy}`);
+              }
+              
+              const profileRes = await fetch(`https://steamcommunity.com/profiles/${steamId.toString()}/?xml=1`, fetchOpts);
+              const text = await profileRes.text();
+
+              if (!text.includes('<error>')) {
+                const personaname = extractXml(text, 'steamID');
+                const avatarfull = extractXml(text, 'avatarFull');
+                const visibilityStateStr = extractXml(text, 'visibilityState');
+                const onlineState = extractXml(text, 'onlineState');
+                const location = extractXml(text, 'location');
+                const memberSince = extractXml(text, 'memberSince');
+
+                let personastate = 0;
+                if (onlineState === 'online' || onlineState === 'in-game') personastate = 1;
+
+                let timecreated = 0;
+                if (memberSince) {
+                  const d = new Date(memberSince);
+                  if (!isNaN(d.getTime())) timecreated = Math.floor(d.getTime() / 1000);
+                }
+
+                userData = {
+                  steamid: steamId.toString(),
+                  personaname: personaname || username,
+                  avatarfull: avatarfull || 'https://steamcommunity-a.akamaihd.net/public/images/applications/store/default.png',
+                  communityvisibilitystate: visibilityStateStr ? parseInt(visibilityStateStr, 10) : 3,
+                  personastate,
+                  loccountrycode: location || '',
+                  timecreated,
+                  profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
+                };
+              }
+          } catch (e) {
+              console.error('Error fetching XML persona:', e);
+          }
+
+          if (!userData) {
+              userData = {
+                  steamid: steamId.toString(),
+                  personaname: username,
+                  avatarfull: 'https://steamcommunity-a.akamaihd.net/public/images/applications/store/default.png',
+                  communityvisibilitystate: 3,
+                  personastate: 0,
+                  loccountrycode: '',
+                  timecreated: 0,
+                  profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
+              }
+          }
+
+          respond(200, {
+            success: true,
+            steamId: steamId.toString(),
+            profile: userData,
+            games: games,
+            game_count: gameCount,
+            walletBalance: engineWalletBalance
+          });
+        } catch (e) {
+          respond(200, { success: true, steamId: steamId?.toString(), message: 'Logged in but failed to fetch private data.' });
+        }
+      });
+
+      client.on('error', (err) => {
+        clearTimeout(timeout);
+        let errorMessage = 'Login failed';
+        if (err.message.includes('PasswordUnset')) errorMessage = 'Account has no password set.';
+        if (err.message.includes('InvalidPassword')) errorMessage = 'Invalid username or password.';
+        if (err.message.includes('AccountNotFound')) errorMessage = 'Steam account not found.';
+        if (err.message.includes('SteamGuard')) errorMessage = 'Steam Guard (2FA) is enabled on this account. Need code/confirmation.';
+        if (err.message.includes('RateLimitExceeded')) errorMessage = 'Too many login attempts. Please try again later.';
+
+        respond(401, { success: false, error: errorMessage, code: err.message });
+      });
+
+      try {
+        client.logOn({
+          accountName: username,
+          password: password
+        });
+      } catch (error) {
+        clearTimeout(timeout);
+        respond(500, { error: 'Internal server error during logon' });
+      }
+    } catch (err) {
+      console.error('Error in login-check setup:', err);
+      res.status(500).json({ error: 'Internal server error: ' + (err.message || 'Unknown') });
     }
   });
-
-  client.on('error', (err) => {
-    clearTimeout(timeout);
-    let errorMessage = 'Login failed';
-    if (err.message.includes('PasswordUnset')) errorMessage = 'Account has no password set.';
-    if (err.message.includes('InvalidPassword')) errorMessage = 'Invalid username or password.';
-    if (err.message.includes('AccountNotFound')) errorMessage = 'Steam account not found.';
-    if (err.message.includes('SteamGuard')) errorMessage = 'Steam Guard (2FA) is enabled on this account. Need code/confirmation.';
-    if (err.message.includes('RateLimitExceeded')) errorMessage = 'Too many login attempts. Please try again later.';
-
-    respond(401, { success: false, error: errorMessage, code: err.message });
-  });
-
-  try {
-    client.logOn({
-      accountName: username,
-      password: password
-    });
-  } catch (error) {
-    clearTimeout(timeout);
-    respond(500, { error: 'Internal server error during logon' });
-  }
-});
 
 app.get('/api/steam/resolve/:vanityUrl', async (req, res) => {
   try {
