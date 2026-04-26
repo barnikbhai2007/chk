@@ -1,6 +1,5 @@
 import express from 'express';
-// Delay loading heavy libs to avoid load-time crashes
-let SteamUser;
+import SteamUser from 'steam-user';
 
 const app = express();
 app.use(express.json());
@@ -27,11 +26,6 @@ app.post('/api/steam/login-check', async (req, res) => {
 
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
-    }
-
-    if (!SteamUser) {
-        const mod = await import('steam-user');
-        SteamUser = mod.default || mod;
     }
 
     const { HttpsProxyAgent } = await import('https-proxy-agent');
