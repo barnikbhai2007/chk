@@ -1,0 +1,6 @@
+{
+  "name": "Steam Pulse",
+  "description": "A high-performance Steam profile and game library checker with real-time lookups.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
