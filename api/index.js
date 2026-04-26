@@ -1,5 +1,8 @@
 import express from 'express';
 import SteamUser from 'steam-user';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import 'lzma';
+import 'adm-zip';
 
 const app = express();
 app.use(express.json());
@@ -27,8 +30,6 @@ app.post('/api/steam/login-check', async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
-
-    const { HttpsProxyAgent } = await import('https-proxy-agent');
     
     let clientOpts = { dataDirectory: null };
     if (proxy) {

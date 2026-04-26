@@ -10,6 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 import SteamUser from 'steam-user';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import 'lzma';
+import 'adm-zip';
 
 async function startServer() {
   const app = express();
@@ -35,8 +38,6 @@ async function startServer() {
     }
   });
 
-  let SteamUser: any;
-
   app.post('/api/steam/login-check', async (req, res) => {
     try {
       const { username, password, proxy } = req.body;
@@ -44,13 +45,6 @@ async function startServer() {
       if (!username || !password) {
         return res.status(400).json({ error: 'Username and password are required' });
       }
-
-      if (!SteamUser) {
-        const mod = await import('steam-user');
-        SteamUser = mod.default || mod;
-      }
-
-      const { HttpsProxyAgent } = await import('https-proxy-agent');
       
       let clientOpts: any = { dataDirectory: null };
       if (proxy) {
