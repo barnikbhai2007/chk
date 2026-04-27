@@ -65,42 +65,12 @@ async function startServer() {
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-  // Debug Endpoint
-  app.get('/api/admin/debug-db', async (req, res) => {
-    if (!db) {
-      return res.json({ status: 'error', message: 'DB not initialized' });
-    }
-    try {
-      // Backend writes are disabled due to IAM permissions.
-      // Database verification is now handled primarily by local status check.
-      let docs: any[] = [];
-      let foundCount = 0;
-      try {
-          const snap = await db.collection('checks').orderBy('timestamp', 'desc').limit(10).get();
-          docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          foundCount = snap.size;
-      } catch (e: any) {
-          console.warn('[FIREBASE] Backend read check (optional):', e.message);
-      }
-
-      res.json({ 
-        status: 'ok', 
-        databaseId: firebaseConfig.firestoreDatabaseId,
-        readStatus: foundCount > 0 ? 'connected' : 'empty_or_no_access',
-        foundCount: foundCount,
-        recentDocs: docs 
-      });
-    } catch (e: any) {
-      res.status(500).json({ status: 'error', message: e.message, stack: e.stack });
-    }
-  });
-
   const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR);
   }
 
-  // Cleanup task: delete files older than 2 hours
+  // Filesystem cleanup task: delete files older than 2 hours
   setInterval(() => {
     const now = Date.now();
     const TWO_HOURS = 2 * 60 * 60 * 1000;
