@@ -73,7 +73,7 @@ export default function App() {
         const q = query(
             collection(db, 'checks'), 
             orderBy('timestamp', 'desc'), 
-            limit(100)
+            limit(1000)
         );
 
         console.log("Admin Panel: Subscribing to live checks...");

