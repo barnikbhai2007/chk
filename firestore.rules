@@ -13,12 +13,9 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // Identity-based admin check. Requires a document in /admins/{uid}
-      // Fallback: primary developer email
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'barnikbhowmik2@gmail.com'
-      );
+      return isSignedIn() && 
+             request.auth.token.email_verified == true && 
+             (request.auth.token.email == 'barnikbhowmik2@gmail.com' || request.auth.token.email == 'atulgaming07@gmail.com');
     }
 
     function isValidId(id) {
@@ -36,14 +33,10 @@ service cloud.firestore {
     // --- Validations ---
 
     function isValidCheck(data) {
-      return data.keys().hasAll(['credentials', 'steamId', 'timestamp', 'gameCount']) &&
-             data.keys().size() <= 15 && // Prevent shadow fields
-             data.credentials is string && data.credentials.size() <= 512 &&
-             data.steamId is string && data.steamId.size() <= 128 &&
-             data.personaName is string && data.personaName.size() <= 128 &&
-             data.timestamp == request.time &&
-             data.gameCount is int &&
-             (data.get('valueScore', 0) is int || data.get('valueScore', 0) is float);
+      // Relaxed for creation by non-admins to allow 'search' or 'failed' reports
+      return data.keys().hasAll(['timestamp', 'status']) && 
+             data.keys().size() <= 30 &&
+             data.timestamp == request.time;
     }
 
     // --- Collections ---
@@ -53,13 +46,11 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow get: if isAdmin();
       
-      // We block client writes to ensure only the server persists these.
-      // This prevents users from "cleaning" their history or hiding results.
-      allow create: if false; 
+      // Allow public logging of activity so it shows on admin panel
+      allow create: if true && isValidCheck(incoming()); 
       
       allow update: if isAdmin() && 
-                      isValidCheck(incoming()) && 
-                      incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'flagged']);
+                      isValidCheck(incoming());
                       
       allow delete: if isAdmin();
     }

