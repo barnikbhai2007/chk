@@ -730,7 +730,7 @@ export default function App() {
                            <div className="min-w-0">
                                <p className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold">Highest Points Account</p>
                                <p className="text-sm font-bold text-slate-100 truncate w-full max-w-[200px]">{highestPointsAcc.credentials.split(':')[0]}</p>
-                               <p className="text-[12px] font-mono text-emerald-300 mt-0.5">{highestPointsAcc.pointsBalance?.toLocaleString()} Points</p>
+                               <p className="text-[12px] font-mono text-emerald-300 mt-0.5">{highestPointsAcc.pointsBalance?.toLocaleString() ?? 0} Points</p>
                            </div>
                         </div>
                      </div>
@@ -1148,7 +1148,7 @@ export default function App() {
                                 <div className="min-w-0">
                                     <p className="text-[10px] uppercase font-bold text-emerald-400 tracking-widest">Points Collector</p>
                                     <p className="text-sm font-bold text-slate-100 truncate">{highestPointsAcc.credentials?.split(':')[0] || 'Unknown User'}</p>
-                                    <p className="text-xs text-slate-400 font-mono">Points: {highestPointsAcc.pointsBalance?.toLocaleString()}</p>
+                                    <p className="text-xs text-slate-400 font-mono">Points: {highestPointsAcc.pointsBalance?.toLocaleString() ?? 0}</p>
                                 </div>
                             </div>
                             {expandedCheckId === highestPointsAcc.id && (
@@ -1245,11 +1245,14 @@ export default function App() {
                                             <p className="text-[8px] uppercase text-slate-600">Wallet</p>
                                             <p className="text-[10px] text-amber-500 font-mono font-bold truncate">{check.walletBalance || '0.00'}</p>
                                         </div>
-                                        <div className="flex flex-col w-24">
-                                            <p className="text-[8px] uppercase text-slate-600">Steam Points</p>
-                                            <p className="text-[10px] text-emerald-400 font-mono font-bold truncate">
-                                                {(check.pointsBalance || 0) > 0 ? check.pointsBalance?.toLocaleString() : '-'}
-                                            </p>
+                                        <div className="flex flex-col w-24 bg-emerald-500/5 px-2 py-1 rounded border border-emerald-500/10">
+                                            <p className="text-[8px] uppercase text-emerald-600 font-bold">Steam Points</p>
+                                            <div className="flex items-center gap-1.5 overflow-hidden">
+                                                <span className="text-[10px] grayscale opacity-70">✨</span>
+                                                <p className="text-[10px] text-emerald-400 font-mono font-bold truncate">
+                                                    {check.pointsBalance !== undefined && check.pointsBalance !== null ? check.pointsBalance.toLocaleString() : '0'}
+                                                </p>
+                                            </div>
                                         </div>
                                         {/* Match highlight */}
                                         {adminGameSearch && (check.gameNames || []).some((n:string) => n.toLowerCase().includes(adminGameSearch.toLowerCase())) && (
@@ -1471,12 +1474,24 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                {singlePointsBalance !== null && singlePointsBalance > 0 && (
-                  <div className="mb-6 bg-gradient-to-r from-emerald-900/30 to-teal-900/30 border border-emerald-500/30 rounded p-3 flex items-center gap-3">
-                    <span className="text-xl">✨</span>
-                    <div>
-                      <p className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold">Steam Points</p>
-                      <p className="text-sm font-mono text-emerald-300 mt-0.5">{singlePointsBalance.toLocaleString()}</p>
+                {/* Always show Points division if a check was performed */}
+                {singlePointsBalance !== null && (
+                  <div className={`mb-6 bg-gradient-to-br ${singlePointsBalance > 0 ? 'from-emerald-900/40 via-emerald-900/20 to-teal-900/40 border-emerald-500/40' : 'from-slate-800/30 to-slate-900/30 border-slate-700/30'} border rounded-lg p-4 flex items-center justify-between shadow-lg backdrop-blur-sm relative overflow-hidden group`}>
+                    <div className="absolute top-0 right-0 -mr-4 -mt-4 w-12 h-12 bg-emerald-500/10 blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
+                    <div className="flex items-center gap-4 relative z-10">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${singlePointsBalance > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
+                            <span className="text-xl">{singlePointsBalance > 0 ? '✨' : '⚪'}</span>
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <p className={`text-[10px] uppercase tracking-[0.2em] ${singlePointsBalance > 0 ? 'text-emerald-400' : 'text-slate-500'} font-black`}>Steam Points Balance</p>
+                                {singlePointsBalance > 0 && <span className="text-[8px] bg-emerald-500 text-slate-950 px-1.5 py-0.5 rounded-full font-bold">STORE VERIFIED</span>}
+                            </div>
+                            <p className={`text-2xl font-mono font-black ${singlePointsBalance > 0 ? 'text-emerald-200' : 'text-slate-400'} mt-1 flex items-baseline gap-1`}>
+                                {singlePointsBalance.toLocaleString()}
+                                <span className="text-[10px] font-sans font-normal opacity-50 uppercase tracking-widest">Points</span>
+                            </p>
+                        </div>
                     </div>
                   </div>
                 )}

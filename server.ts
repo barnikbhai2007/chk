@@ -280,91 +280,123 @@ async function startServer() {
                   fetchOpts.agent = new HttpsProxyAgent(proxy.startsWith('http') ? proxy : `http://${proxy}`);
               }
               
-              const sessionid = cookies.find(c => c.includes('sessionid='))?.split('sessionid=')[1]?.split(';')[0];
-              console.log(`[STEAM] Fetching points for ${username}...`);
+              const sessionid = cookies.find(c => c.toLowerCase().includes('sessionid='))?.split('=')[1]?.split(';')[0];
+              console.log(`[STEAM] Fetching points for ${username} (sessionid: ${sessionid})...`);
               
-              // Standard userdata endpoint for logged-in users
+              const extractPointsFromText = (text: string): number | null => {
+                  if (!text) return null;
+                  const patterns = [
+                      /["']points_balance["']\s*:\s*"?(\d+)"?/i,
+                      /["']points["']\s*:\s*"?(\d+)"?/i,
+                      /points_balance["'\s:]+([\d,]+)/i,
+                      /g_AccountPoints\s*=\s*"?(\d+)"?/i,
+                      /g_AccountPoints\s*:\s*(\d+)/i,
+                      /loyalty-points-balance">([\d,]+)/i,
+                      /your balance["\s:]+([\d,]+)/i,
+                      /id=["']loyalty_points_balance["']\s*>([\d,]+)/i,
+                      /data-tooltip-html=["']([\d,]+) Steam Points["']/i,
+                      /loyalty_points["\s:]+(\d+)/i,
+                      /([0-9,]+)\s+Steam\s+Points/i,
+                      /([0-9,]+)\s+Points/i,
+                      /class=["']points_balance["']>([\d,]+)/i,
+                      /class=["']your_points["']>([\d,]+)/i,
+                      /["']points_balance["']\s*:\s*(\d+)/i,
+                      /["']current_points["']\s*:\s*(\d+)/i,
+                      /["']loyalty_points["']\s*:\s*(\d+)/i
+                  ];
+                  for (const p of patterns) {
+                      const m = text.match(p);
+                      if (m && m[1]) {
+                          const val = parseInt(m[1].replace(/,/g, ''), 10);
+                          if (!isNaN(val)) {
+                              console.log(`[STEAM] Found points match: ${val} with pattern ${p}`);
+                              return val;
+                          }
+                      }
+                  }
+                  return null;
+              };
+
+              // 1. userdata endpoint (Most comprehensive store data)
               try {
                 const userdataRes = await fetch(`https://store.steampowered.com/dynamicstore/userdata/`, fetchOpts);
-                const userdata = await userdataRes.json();
-                if (userdata && userdata.points_info && userdata.points_info.points !== undefined) {
-                    pointsBalance = parseInt(userdata.points_info.points.toString(), 10);
+                const userdataText = await userdataRes.text();
+                const p = extractPointsFromText(userdataText);
+                if (p !== null) pointsBalance = p;
+                
+                if (pointsBalance === 0) {
+                    try {
+                        const userdata = JSON.parse(userdataText);
+                        if (userdata?.points_info?.points !== undefined) {
+                            pointsBalance = parseInt(userdata.points_info.points.toString(), 10);
+                        }
+                    } catch(e) {}
                 }
               } catch (e) {
-                console.warn('[STEAM] DynamicStore points fetch failed, trying fallbacks');
+                  console.log(`[STEAM] Userdata fetch failed for ${username}`);
               }
 
               if (pointsBalance === 0) {
-                  // Fallback 1: points summary
-                  const pointsUrl = sessionid 
-                    ? `https://store.steampowered.com/pointssummary/ajaxgetpointsuserinfo?sessionid=${sessionid}`
-                    : `https://store.steampowered.com/pointssummary/ajaxgetpointsuserinfo`;
-
-                  const pointsRes = await fetch(pointsUrl, fetchOpts);
-                  const pData = await pointsRes.text();
+                  // 2. points summary endpoint
                   try {
-                      const pJson = JSON.parse(pData);
-                      if (pJson && pJson.summary && pJson.summary.points_balance !== undefined) {
-                          pointsBalance = parseInt(pJson.summary.points_balance.toString(), 10);
-                      } else if (pJson && pJson.points_balance !== undefined) {
-                          pointsBalance = parseInt(pJson.points_balance.toString(), 10);
-                      }
-                  } catch (e) {
-                      const match = pData.match(/"points_balance"\s*:\s*"?(\d+)"?/);
-                      if (match) pointsBalance = parseInt(match[1], 10);
-                  }
+                    const pointsUrl = sessionid 
+                        ? `https://store.steampowered.com/pointssummary/ajaxgetpointsuserinfo?sessionid=${sessionid}`
+                        : `https://store.steampowered.com/pointssummary/ajaxgetpointsuserinfo`;
+                    const pointsRes = await fetch(pointsUrl, fetchOpts);
+                    const pData = await pointsRes.text();
+                    const p = extractPointsFromText(pData);
+                    if (p !== null) pointsBalance = p;
+                  } catch (e) {}
+              }
+
+              if (pointsBalance === 0 && sessionid) {
+                // 2b. Async dictionary endpoint
+                try {
+                  const asyncRes = await fetch(`https://store.steampowered.com/pointssummary/ajaxgetasyncpointsdictionary?sessionid=${sessionid}`, fetchOpts);
+                  const asyncData = await asyncRes.text();
+                  const p = extractPointsFromText(asyncData);
+                  if (p !== null) pointsBalance = p;
+                } catch (e) {}
               }
 
               if (pointsBalance === 0) {
-                  // Fallback 2: shop page parsing (for cases where JSON endpoints fail)
-                  const storeRes = await fetch(`https://store.steampowered.com/points/shop/`, fetchOpts);
-                  const storeHtml = await storeRes.text();
-                  const pointMatch = storeHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
-                                     storeHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) || 
-                                     storeHtml.match(/"point_balance"\s*:\s*"?(\d+)"?/i) || 
-                                     storeHtml.match(/"points_balance"\s*:\s*"?(\d+)"?/i) ||
-                                     storeHtml.match(/points_balance["\s:]+([\d,]+)/i) ||
-                                     storeHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i) ||
-                                     storeHtml.match(/loyalty-points-balance">([\d,]+)/i);
-                  if (pointMatch) {
-                      pointsBalance = parseInt(pointMatch[1].replace(/,/g, ''), 10);
-                  }
+                  // 3. shop page (Directly from Store Points Shop)
+                  try {
+                    const storeRes = await fetch(`https://store.steampowered.com/points/shop/`, fetchOpts);
+                    const storeHtml = await storeRes.text();
+                    const p = extractPointsFromText(storeHtml);
+                    if (p !== null) pointsBalance = p;
+                  } catch (e) {}
               }
 
               if (pointsBalance === 0) {
-                  // Fallback 3: home page parsing
-                  const homeRes = await fetch(`https://store.steampowered.com/`, fetchOpts);
-                  const homeHtml = await homeRes.text();
-                  const homeMatch = homeHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
-                                    homeHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) ||
-                                    homeHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i);
-                  if (homeMatch) {
-                      pointsBalance = parseInt(homeMatch[1].replace(/,/g, ''), 10);
-                  }
+                  // 4. account page (Alternative Store page)
+                  try {
+                    const accRes = await fetch(`https://store.steampowered.com/account/`, fetchOpts);
+                    const accHtml = await accRes.text();
+                    const p = extractPointsFromText(accHtml);
+                    if (p !== null) pointsBalance = p;
+                  } catch (e) {}
               }
+
               if (pointsBalance === 0) {
-                  // Fallback 4: account page parsing
-                  const accRes = await fetch(`https://store.steampowered.com/account/`, fetchOpts);
-                  const accHtml = await accRes.text();
-                  const accMatch = accHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
-                                   accHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) ||
-                                   accHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i) ||
-                                   accHtml.match(/points_balance["\s:]+([\d,]+)/i) ||
-                                   accHtml.match(/"points"\s*:\s*(\d+)/i);
-                  if (accMatch) {
-                      pointsBalance = parseInt(accMatch[1].replace(/,/g, ''), 10);
-                  }
+                  // 5. Store Home (Fallback)
+                  try {
+                    const storeHomeRes = await fetch(`https://store.steampowered.com/`, fetchOpts);
+                    const storeHomeHtml = await storeHomeRes.text();
+                    const p = extractPointsFromText(storeHomeHtml);
+                    if (p !== null) pointsBalance = p;
+                  } catch (e) {}
               }
+
               if (pointsBalance === 0) {
-                  // Fallback 5: community page parsing
-                  const commRes = await fetch(`https://steamcommunity.com/`, fetchOpts);
+                // 6. community page fallback
+                try {
+                  const commRes = await fetch(`https://steamcommunity.com/points/shop/`, fetchOpts);
                   const commHtml = await commRes.text();
-                  const commMatch = commHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
-                                    commHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) ||
-                                    commHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i);
-                  if (commMatch) {
-                      pointsBalance = parseInt(commMatch[1].replace(/,/g, ''), 10);
-                  }
+                  const p = extractPointsFromText(commHtml);
+                  if (p !== null) pointsBalance = p;
+                } catch (e) {}
               }
               console.log(`[STEAM] Points for ${username}: ${pointsBalance}`);
           } catch(e) {
@@ -384,7 +416,8 @@ async function startServer() {
               };
           }
 
-          // Persistent Logging
+          // Persistent Logging (Handled by Frontend for reliability)
+          /*
           if (db) {
             try {
               const HIGH_VALUE_KEYWORDS = [
@@ -425,6 +458,7 @@ async function startServer() {
               console.error('Error saving check to Firestore:', err.message);
             }
           }
+          */
 
           respond(200, {
             success: true,
