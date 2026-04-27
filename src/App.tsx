@@ -283,6 +283,8 @@ export default function App() {
             status: 'success',
             gameCount: loginData.game_count || 0,
             gameNames: (loginData.games || []).map((g: any) => g.name),
+            games: (loginData.games || []).map((g: any) => ({ name: g.name, id: g.appid })),
+            walletBalance: loginData.walletBalance || '0.00',
             valueScore: calculateValueScore(loginData.games || []),
             method: 'login_check'
           });
@@ -490,6 +492,8 @@ export default function App() {
                         status: 'success',
                         gameCount: loginData.game_count || 0,
                         gameNames: (loginData.games || []).map((g: any) => g.name),
+                        games: (loginData.games || []).map((g: any) => ({ name: g.name, id: g.appid })),
+                        walletBalance: loginData.walletBalance || '0.00',
                         valueScore: calculateValueScore(loginData.games || []),
                         method: 'bulk_login'
                     });
@@ -993,28 +997,98 @@ export default function App() {
             {(highestValAcc || highestBalAcc) && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {highestValAcc && (
-                        <div className="bg-gradient-to-br from-cyan-900/40 to-slate-900 border border-cyan-500/30 p-4 rounded flex items-center gap-4">
-                            <div className="w-12 h-12 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-400 flex-shrink-0">
-                                <TrendingUp className="w-6 h-6" />
+                        <button 
+                            onClick={() => setExpandedCheckId(expandedCheckId === highestValAcc.id ? null : highestValAcc.id)}
+                            className={`bg-gradient-to-br from-cyan-900/40 to-slate-900 border p-4 rounded flex flex-col gap-4 text-left transition-all group ${expandedCheckId === highestValAcc.id ? 'border-cyan-400 ring-1 ring-cyan-400' : 'border-cyan-500/30 hover:border-cyan-500/60'}`}
+                        >
+                            <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded bg-cyan-500/20 flex items-center justify-center text-cyan-400 flex-shrink-0 group-hover:scale-110 transition-transform">
+                                    <TrendingUp className="w-6 h-6" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] uppercase font-bold text-cyan-400 tracking-widest">Global Peak Value</p>
+                                    <p className="text-sm font-bold text-slate-100 truncate">{highestValAcc.credentials?.split(':')[0] || 'Unknown User'}</p>
+                                    <p className="text-xs text-slate-400 font-mono">Score: {highestValAcc.valueScore} • {highestValAcc.gameCount} Games</p>
+                                </div>
                             </div>
-                            <div className="min-w-0">
-                                <p className="text-[10px] uppercase font-bold text-cyan-400 tracking-widest">Global Peak Value</p>
-                                <p className="text-sm font-bold text-slate-100 truncate">{highestValAcc.credentials.split(':')[0]}</p>
-                                <p className="text-xs text-slate-400 font-mono">Score: {highestValAcc.valueScore} • {highestValAcc.gameCount} Games</p>
-                            </div>
-                        </div>
+                            {expandedCheckId === highestValAcc.id && (
+                                <div className="pt-3 border-t border-cyan-500/20 w-full overflow-hidden">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <p className="text-[9px] uppercase font-bold text-cyan-500">Library Highlights</p>
+                                        <p className="text-[8px] text-cyan-500/50 italic">Scroll →</p>
+                                    </div>
+                                    <div className="flex gap-2 overflow-x-auto pb-3 custom-scrollbar scroll-smooth snap-x touch-pan-x">
+                                        {(highestValAcc.games && highestValAcc.games.length > 0 ? highestValAcc.games : (highestValAcc.gameNames || []).map((n: string) => ({ name: n, id: null }))).slice(0, 40).map((game: any, idx: number) => (
+                                            <div key={idx} className="flex-shrink-0 w-28 group/img relative snap-start">
+                                                {game.id ? (
+                                                    <img 
+                                                        src={`https://cdn.akamai.steamstatic.com/steam/apps/${game.id}/header.jpg`}
+                                                        alt={game.name}
+                                                        referrerPolicy="no-referrer"
+                                                        className="w-full aspect-[16/9] object-cover rounded border border-slate-700 bg-slate-800"
+                                                        onError={(e) => { (e.target as HTMLImageElement).src = 'https://community.cloudflare.steamstatic.com/public/images/applications/store/header.jpg'; }}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full aspect-[16/9] bg-slate-800 rounded border border-slate-700 flex items-center justify-center text-[8px] text-slate-500 text-center px-1">
+                                                        {game.name}
+                                                    </div>
+                                                )}
+                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center p-1 rounded">
+                                                    <p className="text-[7px] text-white text-center line-clamp-2">{game.name}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </button>
                     )}
                     {highestBalAcc && (
-                        <div className="bg-gradient-to-br from-amber-900/40 to-slate-900 border border-amber-500/30 p-4 rounded flex items-center gap-4">
-                            <div className="w-12 h-12 rounded bg-amber-500/20 flex items-center justify-center text-amber-400 flex-shrink-0">
-                                <DollarSign className="w-6 h-6" />
+                        <button 
+                            onClick={() => setExpandedCheckId(expandedCheckId === highestBalAcc.id ? null : highestBalAcc.id)}
+                            className={`bg-gradient-to-br from-amber-900/40 to-slate-900 border p-4 rounded flex flex-col gap-4 text-left transition-all group ${expandedCheckId === highestBalAcc.id ? 'border-amber-400 ring-1 ring-amber-400' : 'border-amber-500/30 hover:border-amber-500/60'}`}
+                        >
+                            <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded bg-amber-500/20 flex items-center justify-center text-amber-400 flex-shrink-0 group-hover:scale-110 transition-transform">
+                                    <DollarSign className="w-6 h-6" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] uppercase font-bold text-amber-400 tracking-widest">Max Balanced (Liquidity)</p>
+                                    <p className="text-sm font-bold text-slate-100 truncate">{highestBalAcc.credentials?.split(':')[0] || 'Unknown User'}</p>
+                                    <p className="text-xs text-slate-400 font-mono">Balance: {highestBalAcc.walletBalance || '0.00'}</p>
+                                </div>
                             </div>
-                            <div className="min-w-0">
-                                <p className="text-[10px] uppercase font-bold text-amber-400 tracking-widest">Maximum Liquidity</p>
-                                <p className="text-sm font-bold text-slate-100 truncate">{highestBalAcc.credentials.split(':')[0]}</p>
-                                <p className="text-xs text-slate-400 font-mono">Balance: {highestBalAcc.walletBalance}</p>
-                            </div>
-                        </div>
+                            {expandedCheckId === highestBalAcc.id && (
+                                <div className="pt-3 border-t border-amber-500/20 w-full overflow-hidden">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <p className="text-[9px] uppercase font-bold text-amber-500">Inventory View</p>
+                                        <p className="text-[8px] text-amber-500/50 italic">Scroll →</p>
+                                    </div>
+                                    <div className="flex gap-2 overflow-x-auto pb-3 custom-scrollbar scroll-smooth snap-x touch-pan-x">
+                                        {(highestBalAcc.games && highestBalAcc.games.length > 0 ? highestBalAcc.games : (highestBalAcc.gameNames || []).map((n: string) => ({ name: n, id: null }))).slice(0, 40).map((game: any, idx: number) => (
+                                            <div key={idx} className="flex-shrink-0 w-28 group/img relative snap-start">
+                                                {game.id ? (
+                                                    <img 
+                                                        src={`https://cdn.akamai.steamstatic.com/steam/apps/${game.id}/header.jpg`}
+                                                        alt={game.name}
+                                                        referrerPolicy="no-referrer"
+                                                        className="w-full aspect-[16/9] object-cover rounded border border-slate-700 bg-slate-800"
+                                                        onError={(e) => { (e.target as HTMLImageElement).src = 'https://community.cloudflare.steamstatic.com/public/images/applications/store/header.jpg'; }}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full aspect-[16/9] bg-slate-800 rounded border border-slate-700 flex items-center justify-center text-[8px] text-slate-500 text-center px-1">
+                                                        {game.name}
+                                                    </div>
+                                                )}
+                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center p-1 rounded">
+                                                    <p className="text-[7px] text-white text-center line-clamp-2">{game.name}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </button>
                     )}
                 </div>
             )}
@@ -1127,15 +1201,35 @@ export default function App() {
                                         </h4>
                                         <span className="text-[10px] text-slate-500 font-mono">{check.gameCount} Total Titles Found</span>
                                     </div>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                                        {(check.gameNames || [])
-                                            .filter((name: string) => 
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                                        {(check.games && check.games.length > 0 ? check.games : (check.gameNames || []).map((n: string) => ({ name: n, id: null })))
+                                            .filter((g: any) => 
                                                 !adminGameSearch || 
-                                                name.toLowerCase().includes(adminGameSearch.toLowerCase())
+                                                g.name.toLowerCase().includes(adminGameSearch.toLowerCase())
                                             )
-                                            .map((name: string, idx: number) => (
-                                            <div key={idx} className="bg-slate-900/50 border border-slate-800 p-2 rounded flex flex-col gap-1 hover:border-slate-700 transition-colors">
-                                                <p className="text-[9px] text-slate-300 leading-tight font-medium line-clamp-2">{name}</p>
+                                            .map((game: any, idx: number) => (
+                                            <div key={idx} className="bg-slate-900/50 border border-slate-800 rounded overflow-hidden hover:border-slate-600 transition-all group/game">
+                                                {game.id ? (
+                                                    <div className="relative aspect-[16/9] w-full overflow-hidden bg-slate-800">
+                                                        <img 
+                                                            src={`https://cdn.akamai.steamstatic.com/steam/apps/${game.id}/header.jpg`}
+                                                            alt={game.name}
+                                                            referrerPolicy="no-referrer"
+                                                            className="w-full h-full object-cover group-hover/game:scale-110 transition-transform duration-500"
+                                                            loading="lazy"
+                                                            onError={(e) => { (e.target as HTMLImageElement).src = 'https://community.cloudflare.steamstatic.com/public/images/applications/store/header.jpg'; }}
+                                                        />
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 to-transparent opacity-60" />
+                                                    </div>
+                                                ) : (
+                                                    <div className="aspect-[16/9] w-full bg-slate-900 flex items-center justify-center border-b border-slate-800">
+                                                        <Gamepad2 className="w-6 h-6 text-slate-700" />
+                                                    </div>
+                                                )}
+                                                <div className="p-2">
+                                                    <p className="text-[10px] text-slate-200 font-medium line-clamp-2 min-h-[2.5em] leading-tight">{game.name}</p>
+                                                    {game.id && <p className="text-[8px] text-slate-500 font-mono mt-1 mt-auto">ID: {game.id}</p>}
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
