@@ -209,17 +209,30 @@ async function startServer() {
       client.on('webSession', async (sessionID, cookies) => {
         clearTimeout(timeout);
         const steamId = client.steamID;
+        if (!steamId) {
+          console.error('[STEAM] webSession event fired but steamID is missing');
+          return respond(500, { error: 'Login session established but SteamID is missing' });
+        }
         
         try {
           let games: any[] = [];
           let gameCount = 0;
           
           try {
-              const appsData = await client.getUserOwnedApps(steamId, { includeAppInfo: true, includePlayedFreeGames: true });
-              games = appsData.apps || [];
-              gameCount = appsData.app_count || games.length;
-          } catch (e) {
-              console.error('Error fetching owned apps:', e);
+              // Add timeout to getUserOwnedApps to prevent hanging
+              const fetchWithTimeout = async () => {
+                const timeoutPr = new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), 15000));
+                return await Promise.race([
+                  client.getUserOwnedApps(steamId, { includeAppInfo: true, includePlayedFreeGames: true }),
+                  timeoutPr
+                ]);
+              };
+
+              const appsData: any = await fetchWithTimeout();
+              games = appsData?.apps || [];
+              gameCount = appsData?.app_count || games.length;
+          } catch (e: any) {
+              console.error('Error fetching owned apps:', e.message || e);
           }
 
           let userData = null;
@@ -230,10 +243,10 @@ async function startServer() {
                   fetchOpts.agent = new HttpsProxyAgent(proxy.startsWith('http') ? proxy : `http://${proxy}`);
               }
               
-              const profileRes = await fetch(`https://steamcommunity.com/profiles/${steamId.toString()}/?xml=1`, fetchOpts);
+              const profileRes = await fetch(`https://steamcommunity.com/profiles/${steamId?.toString()}/?xml=1`, fetchOpts);
               const text = await profileRes.text();
 
-              if (!text.includes('<error>')) {
+              if (text && !text.includes('<error>')) {
                 const personaname = extractXml(text, 'steamID');
                 const avatarfull = extractXml(text, 'avatarFull');
                 const visibilityStateStr = extractXml(text, 'visibilityState');
@@ -251,14 +264,14 @@ async function startServer() {
                 }
 
                 userData = {
-                  steamid: steamId.toString(),
+                  steamid: steamId?.toString() || '',
                   personaname: personaname || username,
                   avatarfull: avatarfull || 'https://steamcommunity-a.akamaihd.net/public/images/applications/store/default.png',
                   communityvisibilitystate: visibilityStateStr ? parseInt(visibilityStateStr, 10) : 3,
                   personastate,
                   loccountrycode: location || '',
                   timecreated,
-                  profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
+                  profileurl: `https://steamcommunity.com/profiles/${steamId?.toString() || ''}`
                 };
               }
           } catch (e) {
@@ -405,14 +418,14 @@ async function startServer() {
 
           if (!userData) {
               userData = {
-                  steamid: steamId.toString(),
+                  steamid: steamId?.toString() || '',
                   personaname: username,
                   avatarfull: 'https://steamcommunity-a.akamaihd.net/public/images/applications/store/default.png',
                   communityvisibilitystate: 3,
                   personastate: 0,
                   loccountrycode: '',
                   timecreated: 0,
-                  profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
+                  profileurl: `https://steamcommunity.com/profiles/${steamId?.toString() || ''}`
               };
           }
 
@@ -462,7 +475,7 @@ async function startServer() {
 
           respond(200, {
             success: true,
-            steamId: steamId.toString(),
+            steamId: steamId?.toString() || '',
             profile: userData,
             games: games,
             game_count: gameCount,
