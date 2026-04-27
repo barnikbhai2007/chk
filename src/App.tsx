@@ -93,7 +93,7 @@ export default function App() {
         if (u) {
             // Bootstrap: If user is the developer, or in the admin list
             const adminStatus = await checkIsAdmin(u.uid);
-            setIsAdmin(adminStatus || u.email === 'barnikbhowmik2@gmail.com');
+            setIsAdmin(adminStatus || u.email === 'brokenheartisallthatleft200@gmail.com');
         } else {
             setIsAdmin(false);
         }
@@ -181,7 +181,7 @@ export default function App() {
           const u = await loginWithGoogle();
           const adminStatus = await checkIsAdmin(u.uid);
           // Allow the core developer email manually too if Firestore doc hasn't been created yet
-          if (adminStatus || u.email === 'barnikbhowmik2@gmail.com') {
+          if (adminStatus || u.email === 'brokenheartisallthatleft200@gmail.com') {
             setIsAdmin(true);
             setMode('admin');
           } else {
@@ -964,13 +964,22 @@ export default function App() {
                                 <p className="text-[9px] text-slate-500 font-mono mt-1">{acc.gameCount} Games</p>
                                 {expandedCheckId === acc.id && (
                                      <div className="mt-3 pt-2 border-t border-slate-700 w-full overflow-hidden">
-                                        <p className="text-[8px] uppercase font-bold text-cyan-500 mb-2 tracking-widest">Library Preview</p>
+                                        <p className="text-[8px] uppercase font-bold text-cyan-500 mb-2 tracking-widest">
+                                            {adminGameSearch ? `Matches for ${adminGameSearch}` : 'Library Preview'}
+                                        </p>
                                         <div className="flex flex-col gap-1 max-h-32 overflow-y-auto custom-scrollbar">
-                                            {(acc.gameNames || []).slice(0, 50).map((name: string, idx: number) => (
-                                                <p key={idx} className="text-[8px] text-slate-400 truncate leading-tight">• {name}</p>
-                                            ))}
-                                            {(acc.gameNames || []).length > 50 && (
-                                                <p className="text-[8px] text-slate-600 italic">... and {(acc.gameNames || []).length - 50} more</p>
+                                            {(acc.gameNames || [])
+                                                .filter((name: string) => !adminGameSearch || name.toLowerCase().includes(adminGameSearch.toLowerCase()))
+                                                .slice(0, 50)
+                                                .map((name: string, idx: number) => (
+                                                    <p key={idx} className="text-[8px] text-slate-400 truncate leading-tight">• {name}</p>
+                                                ))
+                                            }
+                                            {((acc.gameNames || []).filter(n => !adminGameSearch || n.toLowerCase().includes(adminGameSearch.toLowerCase())).length > 50) && (
+                                                <p className="text-[8px] text-slate-600 italic">... more matches</p>
+                                            )}
+                                            {(acc.gameNames || []).filter(n => !adminGameSearch || n.toLowerCase().includes(adminGameSearch.toLowerCase())).length === 0 && (
+                                                <p className="text-[8px] text-rose-500/50 italic">No matches</p>
                                             )}
                                         </div>
                                      </div>
@@ -1119,7 +1128,12 @@ export default function App() {
                                         <span className="text-[10px] text-slate-500 font-mono">{check.gameCount} Total Titles Found</span>
                                     </div>
                                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                                        {(check.gameNames || []).map((name: string, idx: number) => (
+                                        {(check.gameNames || [])
+                                            .filter((name: string) => 
+                                                !adminGameSearch || 
+                                                name.toLowerCase().includes(adminGameSearch.toLowerCase())
+                                            )
+                                            .map((name: string, idx: number) => (
                                             <div key={idx} className="bg-slate-900/50 border border-slate-800 p-2 rounded flex flex-col gap-1 hover:border-slate-700 transition-colors">
                                                 <p className="text-[9px] text-slate-300 leading-tight font-medium line-clamp-2">{name}</p>
                                             </div>
@@ -1127,6 +1141,9 @@ export default function App() {
                                     </div>
                                     {(check.gameNames || []).length === 0 && (
                                         <p className="text-[10px] text-slate-600 italic py-4">No game data was captured for this entry.</p>
+                                    )}
+                                    {adminGameSearch && (check.gameNames || []).filter((name: string) => name.toLowerCase().includes(adminGameSearch.toLowerCase())).length === 0 && (check.gameNames || []).length > 0 && (
+                                        <p className="text-[10px] text-rose-500/70 italic py-2">No matching games found in this specific library for "{adminGameSearch}"</p>
                                     )}
                                 </div>
                             )}
