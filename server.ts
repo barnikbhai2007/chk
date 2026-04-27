@@ -369,6 +369,19 @@ async function startServer() {
         stateMessage
       };
 
+      // Persistent Logging for generic searches
+      if (db) {
+        db.collection('checks').add({
+          steamId: steamId,
+          personaName: userData.personaname,
+          avatar: userData.avatarfull,
+          country: userData.loccountrycode || 'Unknown',
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          status: 'search',
+          method: 'public_profile'
+        }).catch(() => {});
+      }
+
       res.json({ response: { players: [userData] } });
     } catch (error) {
       res.status(500).json({ error: 'Failed to fetch Steam profile' });

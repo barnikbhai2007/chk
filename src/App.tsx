@@ -707,25 +707,26 @@ export default function App() {
   const renderAdminPanel = () => {
     if (!isAdmin) return null;
 
-    const yesterday = new Date();
-    yesterday.setHours(yesterday.getHours() - 24);
-
-    const recentChecks = allChecks.filter((c: any) => {
-        if (!c.timestamp) return true;
-        const ts = c.timestamp instanceof Timestamp ? c.timestamp.toDate() : new Date(c.timestamp);
-        return ts > yesterday;
-    });
-
-    const successfulChecks = recentChecks.filter((c: any) => c.status === 'success');
+    const successfulChecks = allChecks.filter((c: any) => c.status === 'success');
     const totalValue = successfulChecks.reduce((acc, c) => acc + (c.valueScore || 0), 0);
     
-    // Search filter
-    const filteredChecks = recentChecks.filter((check: any) => {
+    // Search filter (on all fetched checks)
+    const filteredChecks = allChecks.filter((check: any) => {
         if (!adminGameSearch) return true;
         const query = adminGameSearch.toLowerCase().trim();
         return (check.gameNames || []).some((name: string) => name.toLowerCase().includes(query)) ||
-               check.credentials?.toLowerCase().includes(query);
+               check.credentials?.toLowerCase().includes(query) ||
+               check.personaName?.toLowerCase().includes(query) ||
+               check.steamId?.toLowerCase().includes(query);
     });
+
+    const yesterday = new Date();
+    yesterday.setHours(yesterday.getHours() - 24);
+    const recentChecksCount = allChecks.filter((c: any) => {
+        if (!c.timestamp) return true;
+        const ts = c.timestamp instanceof Timestamp ? c.timestamp.toDate() : new Date(c.timestamp);
+        return ts > yesterday;
+    }).length;
 
     // Top 10 Global
     const top10 = [...successfulChecks]
@@ -759,13 +760,13 @@ export default function App() {
                    {adminError ? (
                        <p className="text-[10px] text-rose-500 uppercase font-mono mt-1 font-bold">Error: {adminError}</p>
                    ) : (
-                       <p className="text-[10px] text-slate-500 uppercase font-mono mt-1">Live Monitoring • Global Checks (Last 24h)</p>
+                       <p className="text-[10px] text-slate-500 uppercase font-mono mt-1">Live Monitoring • Global Search & Login Stream</p>
                    )}
                 </div>
                 <div className="flex gap-4 items-center">
                     <div className="text-right">
-                        <p className="text-[9px] uppercase text-slate-500 font-bold">Authenticated as</p>
-                        <p className="text-xs font-mono text-cyan-400">{user?.email}</p>
+                        <p className="text-[9px] uppercase text-slate-500 font-bold">Activity Status</p>
+                        <p className="text-xs font-mono text-emerald-400">SYNCING LIVE</p>
                     </div>
                     <button 
                       onClick={() => { setMode('single'); signOut(auth); }}
@@ -778,22 +779,24 @@ export default function App() {
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded">
-                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-slate-400">Hits (24h)</p>
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-slate-400">Logged Hits</p>
                    <p className="text-2xl font-black font-mono">{allChecks.length}</p>
+                   <p className="text-[8px] text-slate-600 uppercase mt-1">Found in snapshot</p>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded">
-                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-emerald-500/70">Valid Hits</p>
-                   <p className="text-2xl font-black font-mono text-emerald-500">{successfulChecks.length}</p>
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-emerald-500/70">Recent (24h)</p>
+                   <p className="text-2xl font-black font-mono text-emerald-500">{recentChecksCount}</p>
+                   <p className="text-[8px] text-slate-600 uppercase mt-1">New signals today</p>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded">
-                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-cyan-500/70">Daily Volume</p>
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-cyan-500/70">Success Value</p>
                    <p className="text-2xl font-black font-mono text-cyan-500">{Math.round(totalValue)}</p>
+                   <p className="text-[8px] text-slate-600 uppercase mt-1">Total score points</p>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded">
-                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-rose-500/70">Burn Rate</p>
-                   <p className="text-2xl font-black font-mono text-rose-500">
-                       {allChecks.length ? Math.round((allChecks.filter(c => c.status === 'failed').length / allChecks.length) * 100) : 0}%
-                   </p>
+                   <p className="text-[9px] uppercase text-slate-500 font-bold mb-1 tracking-widest text-rose-500/70">Admin Access</p>
+                   <p className="text-xs font-mono text-slate-400 truncate">{user?.email}</p>
+                   <p className="text-[8px] text-emerald-500 uppercase mt-1">Authorized</p>
                 </div>
             </div>
 
@@ -880,9 +883,11 @@ export default function App() {
                                     </div>
                                 )}
                                 <div className="min-w-0">
-                                    <p className="text-xs font-bold truncate text-slate-200 select-all">{check.credentials}</p>
-                                    <p className="text-[9px] text-slate-500 font-mono mt-1">
+                                    <p className="text-xs font-bold truncate text-slate-200 select-all">{check.credentials || check.steamId}</p>
+                                    <p className="text-[9px] text-slate-500 font-mono mt-1 flex items-center gap-2">
                                         {check.timestamp instanceof Timestamp ? check.timestamp.toDate().toLocaleString() : 'Saving...'}
+                                        {check.status === 'search' && <span className="text-[8px] bg-slate-800 text-slate-400 px-1 rounded">PUBLIC SEARCH</span>}
+                                        {check.status === 'failed' && <span className="text-[8px] bg-rose-900/20 text-rose-400 px-1 rounded">AUTH FAILED</span>}
                                     </p>
                                 </div>
                             </div>
@@ -921,6 +926,17 @@ export default function App() {
                                             </div>
                                         )}
                                     </>
+                                ) : check.status === 'search' ? (
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex flex-col">
+                                            <p className="text-[8px] uppercase text-slate-600">Action</p>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase">Profile Scrape</p>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <p className="text-[8px] uppercase text-slate-600">Subject</p>
+                                            <p className="text-[10px] text-slate-300 font-mono">{check.personaName}</p>
+                                        </div>
+                                    </div>
                                 ) : (
                                     <div className="flex items-center gap-2 text-rose-500/60 bg-rose-500/5 px-3 py-1 rounded-full border border-rose-500/10">
                                         <AlertCircle className="w-3 h-3" />
