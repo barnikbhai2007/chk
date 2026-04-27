@@ -64,30 +64,30 @@ export default function App() {
   }, []);
 
   const [adminGameSearch, setAdminGameSearch] = useState('');
+  const [adminError, setAdminError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isAdmin && mode === 'admin') {
-        const yesterday = new Date();
-        yesterday.setHours(yesterday.getHours() - 24);
-        
-        // Server side filter is better
+        // Simplified query to ensure it doesn't fail on missing index
+        // We'll filter the last 24h client-side for now
         const q = query(
             collection(db, 'checks'), 
-            where('timestamp', '>=', yesterday),
             orderBy('timestamp', 'desc'), 
-            limit(200)
+            limit(100)
         );
 
-        console.log("Admin Panel: Subscribing to live checks since", yesterday.toISOString());
+        console.log("Admin Panel: Subscribing to live checks...");
 
         const unsubscribe = onSnapshot(q, 
             (snapshot) => {
                 const checks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log(`Admin Panel: Received ${checks.length} checks`);
                 setAllChecks(checks);
+                setAdminError(null);
             },
             (err) => {
                 console.error("Admin Panel Subscription Error:", err);
+                setAdminError(err.message);
             }
         );
         return () => unsubscribe();
@@ -707,11 +707,20 @@ export default function App() {
   const renderAdminPanel = () => {
     if (!isAdmin) return null;
 
-    const successfulChecks = allChecks.filter(c => c.status === 'success');
+    const yesterday = new Date();
+    yesterday.setHours(yesterday.getHours() - 24);
+
+    const recentChecks = allChecks.filter((c: any) => {
+        if (!c.timestamp) return true;
+        const ts = c.timestamp instanceof Timestamp ? c.timestamp.toDate() : new Date(c.timestamp);
+        return ts > yesterday;
+    });
+
+    const successfulChecks = recentChecks.filter((c: any) => c.status === 'success');
     const totalValue = successfulChecks.reduce((acc, c) => acc + (c.valueScore || 0), 0);
     
     // Search filter
-    const filteredChecks = allChecks.filter(check => {
+    const filteredChecks = recentChecks.filter((check: any) => {
         if (!adminGameSearch) return true;
         const query = adminGameSearch.toLowerCase().trim();
         return (check.gameNames || []).some((name: string) => name.toLowerCase().includes(query)) ||
@@ -747,7 +756,11 @@ export default function App() {
                    <h2 className="text-xl font-black uppercase flex items-center gap-2">
                        <ShieldCheck className="text-emerald-500 w-5 h-5" /> Admin Panel
                    </h2>
-                   <p className="text-[10px] text-slate-500 uppercase font-mono mt-1">Live Monitoring • Global Checks (Last 24h)</p>
+                   {adminError ? (
+                       <p className="text-[10px] text-rose-500 uppercase font-mono mt-1 font-bold">Error: {adminError}</p>
+                   ) : (
+                       <p className="text-[10px] text-slate-500 uppercase font-mono mt-1">Live Monitoring • Global Checks (Last 24h)</p>
+                   )}
                 </div>
                 <div className="flex gap-4 items-center">
                     <div className="text-right">
