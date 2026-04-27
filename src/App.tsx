@@ -5,7 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect, FormEvent, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, List, Play, Square, ChevronDown, ChevronUp, Download, Shield, ShieldCheck, LogOut, Clock, Globe, CreditCard, TrendingUp, DollarSign, Trash2, Eye } from 'lucide-react';
+import { Search, User, Gamepad2, AlertCircle, Loader2, ExternalLink, Upload, List, Play, Square, ChevronDown, ChevronUp, Download, Shield, ShieldCheck, LogOut, Clock, Globe, CreditCard, TrendingUp, DollarSign, Trash2, Eye, Sparkles } from 'lucide-react';
 import { SteamProfile, SteamGame, ProfileState } from './types';
 import { auth, db, loginWithGoogle, checkIsAdmin } from './firebase';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
@@ -19,6 +19,7 @@ interface BulkAccount {
   profile?: SteamProfile;
   games?: SteamGame[];
   walletBalance?: string | null;
+  pointsBalance?: number | null;
 }
 
 const HIGH_VALUE_KEYWORDS = [
@@ -64,6 +65,7 @@ export default function App() {
   const [games, setGames] = useState<SteamGame[]>([]);
   const [gameCount, setGameCount] = useState(0);
   const [singleWalletBalance, setSingleWalletBalance] = useState<string | null>(null);
+  const [singlePointsBalance, setSinglePointsBalance] = useState<number | null>(null);
 
   // Bulk Mode State
   const [bulkAccounts, setBulkAccounts] = useState<BulkAccount[]>([]);
@@ -273,6 +275,7 @@ export default function App() {
           setGames(loginData.games || []);
           setGameCount(loginData.game_count || 0);
           setSingleWalletBalance(loginData.walletBalance || null);
+          setSinglePointsBalance(loginData.pointsBalance || null);
           handledViaLogin = true;
           
           logActivity({
@@ -285,6 +288,7 @@ export default function App() {
             gameNames: (loginData.games || []).map((g: any) => g.name),
             games: (loginData.games || []).map((g: any) => ({ name: g.name, id: g.appid })),
             walletBalance: loginData.walletBalance || '0.00',
+            pointsBalance: loginData.pointsBalance || 0,
             valueScore: calculateValueScore(loginData.games || []),
             method: 'login_check'
           });
@@ -479,6 +483,7 @@ export default function App() {
                             profile: loginData.profile,
                             games: loginData.games || [],
                             walletBalance: loginData.walletBalance,
+                            pointsBalance: loginData.pointsBalance,
                             error: undefined
                         };
                         return next;
@@ -494,6 +499,7 @@ export default function App() {
                         gameNames: (loginData.games || []).map((g: any) => g.name),
                         games: (loginData.games || []).map((g: any) => ({ name: g.name, id: g.appid })),
                         walletBalance: loginData.walletBalance || '0.00',
+                        pointsBalance: loginData.pointsBalance || 0,
                         valueScore: calculateValueScore(loginData.games || []),
                         method: 'bulk_login'
                     });
@@ -629,12 +635,20 @@ export default function App() {
     };
 
     let highestBalanceAcc = null;
+    let highestPointsAcc = null;
     if (successAccounts.length > 0) {
         highestBalanceAcc = successAccounts.reduce((prev, current) => {
             return parseBalance(current.walletBalance) > parseBalance(prev.walletBalance) ? current : prev;
         });
         if (parseBalance(highestBalanceAcc?.walletBalance) === 0) {
             highestBalanceAcc = null;
+        }
+
+        highestPointsAcc = successAccounts.reduce((prev, current) => {
+            return (current.pointsBalance || 0) > (prev.pointsBalance || 0) ? current : prev;
+        });
+        if ((highestPointsAcc?.pointsBalance || 0) === 0) {
+            highestPointsAcc = null;
         }
     }
 
@@ -698,13 +712,25 @@ export default function App() {
                      </div>
                  )}
                  {highestBalanceAcc && highestBalanceAcc.profile && (
-                     <div className="bg-gradient-to-r from-amber-900/30 to-orange-900/30 border border-amber-500/30 rounded p-3 flex flex-col md:flex-row items-center gap-4 w-full">
+                     <div className="bg-gradient-to-r from-amber-900/30 to-orange-900/30 border border-amber-500/30 rounded p-3 flex flex-col items-center gap-4 w-full">
                         <div className="flex items-center gap-3">
                            <span className="text-xl flex-shrink-0">💰</span>
                            <div className="min-w-0">
                                <p className="text-[9px] uppercase tracking-widest text-amber-400 font-bold">Highest Balance Account</p>
                                <p className="text-sm font-bold text-slate-100 truncate w-full max-w-[200px]">{highestBalanceAcc.credentials.split(':')[0]}</p>
                                <p className="text-[12px] font-mono text-amber-300 mt-0.5">{highestBalanceAcc.walletBalance}</p>
+                           </div>
+                        </div>
+                     </div>
+                 )}
+                 {highestPointsAcc && (highestPointsAcc.pointsBalance || 0) > 0 && highestPointsAcc.profile && (
+                     <div className="bg-gradient-to-r from-emerald-900/30 to-teal-900/30 border border-emerald-500/30 rounded p-3 flex flex-col items-center gap-4 w-full">
+                        <div className="flex items-center gap-3">
+                           <span className="text-xl flex-shrink-0">✨</span>
+                           <div className="min-w-0">
+                               <p className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold">Highest Points Account</p>
+                               <p className="text-sm font-bold text-slate-100 truncate w-full max-w-[200px]">{highestPointsAcc.credentials.split(':')[0]}</p>
+                               <p className="text-[12px] font-mono text-emerald-300 mt-0.5">{highestPointsAcc.pointsBalance?.toLocaleString()} Points</p>
                            </div>
                         </div>
                      </div>
@@ -736,6 +762,9 @@ export default function App() {
                                         <div className="flex items-center gap-2">
                                             {acc.walletBalance && expandedBulkAccountId !== acc.id && (
                                                 <span className="text-sm" title="Has Wallet Balance">💰</span>
+                                            )}
+                                            {(acc.pointsBalance || 0) > 0 && expandedBulkAccountId !== acc.id && (
+                                                <span className="text-sm cursor-help" title={`${acc.pointsBalance?.toLocaleString()} Points`}>✨</span>
                                             )}
                                             <span className="text-[10px] uppercase tracking-widest text-cyan-500 flex items-center gap-1">
                                                 <span className="hidden sm:inline">{acc.games?.length || 0} Games</span>
@@ -772,15 +801,26 @@ export default function App() {
                             {/* Expanded Game List */}
                             {expandedBulkAccountId === acc.id && acc.status === 'success' && acc.games && (
                                 <div className="mt-2 pt-2 border-t border-slate-800/50 flex flex-col gap-3">
-                                    {acc.walletBalance && (
-                                        <div className="flex items-center gap-2 bg-amber-900/20 text-amber-400 border border-amber-900/50 px-2 py-1.5 rounded w-max">
-                                            <span className="text-sm">💰</span>
-                                            <div>
-                                                <p className="text-[9px] uppercase tracking-widest font-bold opacity-80">Wallet Balance</p>
-                                                <p className="text-xs font-mono font-bold">{acc.walletBalance}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {acc.walletBalance && (
+                                            <div className="flex items-center gap-2 bg-amber-900/20 text-amber-400 border border-amber-900/50 px-2 py-1.5 rounded w-max">
+                                                <span className="text-sm">💰</span>
+                                                <div>
+                                                    <p className="text-[9px] uppercase tracking-widest font-bold opacity-80">Wallet Balance</p>
+                                                    <p className="text-xs font-mono font-bold">{acc.walletBalance}</p>
+                                                </div>
                                             </div>
-                                        </div>
-                                    )}
+                                        )}
+                                        {acc.pointsBalance !== undefined && acc.pointsBalance !== null && (
+                                            <div className="flex items-center gap-2 bg-emerald-900/20 text-emerald-400 border border-emerald-900/50 px-2 py-1.5 rounded w-max">
+                                                <span className="text-sm">✨</span>
+                                                <div>
+                                                    <p className="text-[9px] uppercase tracking-widest font-bold opacity-80">Steam Points</p>
+                                                    <p className="text-xs font-mono font-bold">{acc.pointsBalance.toLocaleString()}</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                                         {[...acc.games]
                                             .sort((a,b) => (b.playtime_forever || 0) - (a.playtime_forever || 0))
@@ -864,6 +904,12 @@ export default function App() {
             };
             return getBal(curr.walletBalance) > getBal(prev.walletBalance) ? curr : prev;
         }, successfulChecks[0])
+        : null;
+
+    const highestPointsAcc = successfulChecks.length > 0
+        ? successfulChecks.reduce((prev: any, curr: any) => 
+            (curr.pointsBalance || 0) > (prev.pointsBalance || 0) ? curr : prev
+          )
         : null;
 
     return (
@@ -994,8 +1040,8 @@ export default function App() {
                 </div>
             )}
 
-            {(highestValAcc || highestBalAcc) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {(highestValAcc || highestBalAcc || (highestPointsAcc && (highestPointsAcc.pointsBalance || 0) > 0)) && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {highestValAcc && (
                         <button 
                             onClick={() => setExpandedCheckId(expandedCheckId === highestValAcc.id ? null : highestValAcc.id)}
@@ -1090,6 +1136,53 @@ export default function App() {
                             )}
                         </button>
                     )}
+                    {highestPointsAcc && (highestPointsAcc.pointsBalance || 0) > 0 && (
+                        <button 
+                            onClick={() => setExpandedCheckId(expandedCheckId === highestPointsAcc.id ? null : highestPointsAcc.id)}
+                            className={`bg-gradient-to-br from-emerald-900/40 to-slate-900 border p-4 rounded flex flex-col gap-4 text-left transition-all group ${expandedCheckId === highestPointsAcc.id ? 'border-emerald-400 ring-1 ring-emerald-400' : 'border-emerald-500/30 hover:border-emerald-500/60'}`}
+                        >
+                            <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded bg-emerald-500/20 flex items-center justify-center text-emerald-400 flex-shrink-0 group-hover:scale-110 transition-transform">
+                                    <Sparkles className="w-6 h-6" />
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] uppercase font-bold text-emerald-400 tracking-widest">Points Collector</p>
+                                    <p className="text-sm font-bold text-slate-100 truncate">{highestPointsAcc.credentials?.split(':')[0] || 'Unknown User'}</p>
+                                    <p className="text-xs text-slate-400 font-mono">Points: {highestPointsAcc.pointsBalance?.toLocaleString()}</p>
+                                </div>
+                            </div>
+                            {expandedCheckId === highestPointsAcc.id && (
+                                <div className="pt-3 border-t border-emerald-500/20 w-full overflow-hidden">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <p className="text-[9px] uppercase font-bold text-emerald-500">Points Highlights</p>
+                                        <p className="text-[8px] text-emerald-500/50 italic">Scroll →</p>
+                                    </div>
+                                    <div className="flex gap-2 overflow-x-auto pb-3 custom-scrollbar scroll-smooth snap-x touch-pan-x">
+                                        {(highestPointsAcc.games && highestPointsAcc.games.length > 0 ? highestPointsAcc.games : (highestPointsAcc.gameNames || []).map((n: string) => ({ name: n, id: null }))).slice(0, 40).map((game: any, idx: number) => (
+                                            <div key={idx} className="flex-shrink-0 w-28 group/img relative snap-start">
+                                                {game.id ? (
+                                                    <img 
+                                                        src={`https://cdn.akamai.steamstatic.com/steam/apps/${game.id}/header.jpg`}
+                                                        alt={game.name}
+                                                        referrerPolicy="no-referrer"
+                                                        className="w-full aspect-[16/9] object-cover rounded border border-slate-700 bg-slate-800"
+                                                        onError={(e) => { (e.target as HTMLImageElement).src = 'https://community.cloudflare.steamstatic.com/public/images/applications/store/header.jpg'; }}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full aspect-[16/9] bg-slate-800 rounded border border-slate-700 flex items-center justify-center text-[8px] text-slate-500 text-center px-1">
+                                                        {game.name}
+                                                    </div>
+                                                )}
+                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center p-1 rounded">
+                                                    <p className="text-[7px] text-white text-center line-clamp-2">{game.name}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -1151,6 +1244,12 @@ export default function App() {
                                         <div className="flex flex-col w-20">
                                             <p className="text-[8px] uppercase text-slate-600">Wallet</p>
                                             <p className="text-[10px] text-amber-500 font-mono font-bold truncate">{check.walletBalance || '0.00'}</p>
+                                        </div>
+                                        <div className="flex flex-col w-24">
+                                            <p className="text-[8px] uppercase text-slate-600">Steam Points</p>
+                                            <p className="text-[10px] text-emerald-400 font-mono font-bold truncate">
+                                                {(check.pointsBalance || 0) > 0 ? check.pointsBalance?.toLocaleString() : '-'}
+                                            </p>
                                         </div>
                                         {/* Match highlight */}
                                         {adminGameSearch && (check.gameNames || []).some((n:string) => n.toLowerCase().includes(adminGameSearch.toLowerCase())) && (
@@ -1364,11 +1463,20 @@ export default function App() {
                 </div>
 
                 {singleWalletBalance && (
-                  <div className="mb-6 bg-gradient-to-r from-amber-900/30 to-orange-900/30 border border-amber-500/30 rounded p-3 flex items-center gap-3">
+                  <div className="mb-2 bg-gradient-to-r from-amber-900/30 to-orange-900/30 border border-amber-500/30 rounded p-3 flex items-center gap-3">
                     <span className="text-xl">💰</span>
                     <div>
                       <p className="text-[9px] uppercase tracking-widest text-amber-400 font-bold">Wallet Balance</p>
                       <p className="text-sm font-mono text-amber-300 mt-0.5">{singleWalletBalance}</p>
+                    </div>
+                  </div>
+                )}
+                {singlePointsBalance !== null && singlePointsBalance > 0 && (
+                  <div className="mb-6 bg-gradient-to-r from-emerald-900/30 to-teal-900/30 border border-emerald-500/30 rounded p-3 flex items-center gap-3">
+                    <span className="text-xl">✨</span>
+                    <div>
+                      <p className="text-[9px] uppercase tracking-widest text-emerald-400 font-bold">Steam Points</p>
+                      <p className="text-sm font-mono text-emerald-300 mt-0.5">{singlePointsBalance.toLocaleString()}</p>
                     </div>
                   </div>
                 )}

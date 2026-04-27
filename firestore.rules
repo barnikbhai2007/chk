@@ -34,9 +34,7 @@ service cloud.firestore {
 
     function isValidCheck(data) {
       // Relaxed for creation by non-admins to allow 'search' or 'failed' reports
-      return data.keys().hasAll(['timestamp', 'status']) && 
-             data.keys().size() <= 30 &&
-             data.timestamp == request.time;
+      return data.keys().hasAll(['timestamp', 'status']);
     }
 
     // --- Collections ---

